@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bybit Historical Test</title>
+<style>
+body{background:#10151f;color:white;font-family:Arial;padding:16px}
+h2{color:#f7a600}
+.card{background:#1c2635;padding:14px;margin:12px 0;border-radius:10px}
+input,button{width:100%;padding:13px;margin:7px 0;box-sizing:border-box}
+button{background:#f7a600;border:0;border-radius:7px;font-weight:bold}
+.small{color:#aaa;font-size:13px}
+.green{color:#36d399}.red{color:#ff6464}
+</style>
+</head>
+<body>
+<h2>BYBIT HISTORICAL TEST</h2>
+<p class="small">Історичний тест пробиття вчорашніх рівнів · 15 хвилин</p>
+
+<label>Монета:</label>
+<input id="symbol" value="BTCUSDT">
+
+<button onclick="runTest()">Почати тест за 30 днів</button>
+
+<div id="status">Очікування запуску...</div>
+<div id="result"></div>
+
+<script>
+const API="https://api.bybit.com";
+
+function datePrague(t){
+ return new Intl.DateTimeFormat("en-CA",{
+  timeZone:"Europe/Prague",
+  year:"numeric",month:"2-digit",day:"2-digit"
+ }).format(new Date(t));
+}
+
+async function getKlines(symbol,start,end){
+ let all=[];
+ let cursor=start;
+
+ while(cursor<end){
+  const url=API+"/v5/market/kline?category=linear&symbol="+
+   symbol+"&interval=15&start="+cursor+"&end="+end+"&limit=1000";
+
+  const r=await fetch(url);
+  const j=await r.json();
+
+  if(j.retCode!==0)throw Error(j.retMsg);
+
+  const rows=j.result.list||[];
+  if(!rows.length)break;
+
+  all.push(...rows);
+
+  const oldest=Math.min(...rows.map(x=>Number(x[0])));
+  if(oldest<=cursor)break;
+
+  cursor=oldest+15*60*1000;
+  await new Promise(resolve=>setTimeout(resolve,150));
+ }
+
+ const unique={};
+ all.forEach(x=>unique[x[0]]=x);
+
+ return Object.values(unique)
+  .map(x=>({
+   time:Number(x[0]),
+   open:Number(x[1]),
+   high:Number(x[2]),
+   low:Number(x[3]),
+   close:Number(x[4])
+  }))
+  .sort((a,b)=>a.time-b.time);
+}
+
+async function runTest(){
+ const symbol=document.getElementById("symbol").value
+  .trim().toUpperCase();
+ const status=document.getElementById("status");
+ const result=document.getElementById("result");
+
+ result.innerHTML="";
+ status.textContent="Завантажую історичні свічки...";
+
+ try{
+  const now=Date.now();
+  const start=now-31*24*60*60*1000;
+  const candles=await getKlines(symbol,start,now);
+
+  if(candles.length<100)throw Error("Недостатньо історичних даних.");
+
+  const days={};
+  candles.forEach(c=>{
+   const day=datePrague(c.time);
+   if(!days[day])days[day]={high:-Infinity,low:Infinity};
+   days[day].high=Math.max(days[day].high,c.high);
+   days[day].low=Math.min(days[day].low,c.low);
+  });
+
+  const dates=Object.keys(days).sort();
+  let total=0,success=0,falseBreak=0,expired=0;
+  let details=[];
+
+  for(let d=1;d<dates.length;d++){
+   const day=dates[d];
+   const prev=days[dates[d-1]];
+   const current=candles.filter(c=>datePrague(c.time)===day);
+
+   for(let i=0;i<current.length;i++){
+    const c=current[i];
+
+    let direction="";
+    let level=0;
+
+    if(c.close>prev.high){
+     direction="Вгору";
+     level=prev.high;
+    }else if(c.close<prev.low){
+     direction="Вниз";
+     level=prev.low;
+    }else continue;
+
+    total++;
+
+    const deadline=c.time+23*60*60*1000;
+    let outcome="Час вичерпано";
+    let reached=false;
+    let returned=false;
+
+    for(let j=i+1;j<current.length;j++){
+     const next=current[j];
+     if(next.time>deadline)break;
+
+     if(direction==="Вгору"){
+      if(next.close<=level){
+       returned=true;
+       break;
+      }
+      if(next.high>=c.close*1.002){
+       reached=true;
+       break;
+      }
+     }else{
+      if(next.close>=level){
+       returned=true;
+       break;
+      }
+      if(next.low<=c.close*0.998){
+       reached=true;
+       break;
+      }
+     }
+    }
+
+    if(reached){
+     success++;
+     outcome="Рух продовжився";
+    }else if(returned){
+     falseBreak++;
+     outcome="Хибне пробиття";
+    }else{
+     expired++;
+    }
+
+    details.push({
+     day,direction,level,outcome
+    });
+
+    // Одне перше пробиття на день, щоб не рахувати
+    // багато свічок одного й того самого руху.
+    break;
+   }
+  }
+
+  const accuracy=total?success/total*100:0;
+
+  status.textContent="Тест завершено · Свічок: "+candles.length;
+
+  result.innerHTML=`
+   <div class="card">
+    <h3>${symbol}</h3>
+    <p>Пробиттів: ${total}</p>
+    <p class="green">Успішних рухів: ${success}</p>
+    <p class="red">Хибних пробиттів: ${falseBreak}</p>
+    <p>Без результату за 23 години: ${expired}</p>
+    <h2>Успішність: ${accuracy.toFixed(1)}%</h2>
+    <p class="small">
+     Це попередній тест руху на 0,2% від ціни пробиття,
+     а не підтверджена ймовірність досягнення локального максимуму
+     або мінімуму.
+    </p>
+   </div>
+   <div class="card">
+    <h3>Останні результати</h3>
+    ${details.slice(-20).reverse().map(x=>`
+     <p>${x.day} · ${x.direction} · ${x.outcome}</p>
+    `).join("")}
+   </div>
+  `;
+
+ }catch(e){
+  status.textContent="Помилка: "+e.message;
+ }
+}
+</script>
+</body>
+</html>
