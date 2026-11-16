@@ -79,8 +79,8 @@ function fmt(n){
 }
 async function loadCandles(symbol){
   const now=Date.now();
-  const end=now-92*DAY;
-  const start=now-182*DAY;
+  const end=now-180*DAY;
+  const start=now-272*DAY;
   let all=[];
   let cursor=start;
   while(cursor<end){
