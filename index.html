@@ -1,200 +1,253 @@
-<!Dhtml>
+<!DOCTYPE html>
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bybit Signals</title>
 <style>
-body{background:#10151f;color:white;font-family:Arial;padding:16px}
+body{background:#10151f;color:white;font-family:Arial,sans-serif;padding:16px;max-width:900px;margin:auto}
 h2{color:#f7a600}
 .card{background:#1c2635;padding:14px;margin:10px 0;border-radius:10px}
 .green{color:#36d399}.red{color:#ff6464}.yellow{color:#ffc247}
-input{width:100%;padding:12px;box-sizing:border-box;margin:12px 0}
+input{width:100%;padding:12px;box-sizing:border-box;margin:12px 0;border-radius:8px;border:0}
 .small{color:#aaa;font-size:13px}
+.badge{font-weight:bold;font-size:20px}
 </style>
 </head>
 <body>
 <h2>BYBIT SIGNALS</h2>
-<div class="small">USDT Perpetual · Europe/Prague · Поріг 0.2%</div>
+<div class="small">Усі USDT Perpetual · Europe/Prague · 15 хв</div>
 <div id="status">Завантаження...</div>
 <input id="search" placeholder="Пошук монети..." oninput="render()">
 <div id="list"></div>
-
 <script>
 const API="https://api.bybit.com";
 const LIMIT=0.2;
+const DAY=86400000;
+const BAR=900000;
 let coins=[];
+let signals={};
 let cacheDay="";
 let loading=false;
-let lastTouchScan=0;
-let touched={};
+let lastScan=0;
 
 function pragueDate(date=new Date()){
- return new Intl.DateTimeFormat("en-CA",{
-  timeZone:"Europe/Prague",
-  year:"numeric",month:"2-digit",day:"2-digit"
- }).format(date);
+return new Intl.DateTimeFormat(“en-CA”,{
+timeZone:“Europe/Prague”,
+year:“numeric”,month:“2-digit”,day:“2-digit”
+}).format(date);
 }
 
-function pragueMidnightUTC(day){
- const [y,m,d]=day.split("-").map(Number);
- let guess=Date.UTC(y,m-1,d);
- for(let i=0;i<4;i++){
-  const parts=new Intl.DateTimeFormat("en-GB",{
-   timeZone:"Europe/Prague",
-   year:"numeric",month:"2-digit",day:"2-digit",
-   hour:"2-digit",minute:"2-digit",second:"2-digit",
-   hourCycle:"h23"
-  }).formatToParts(new Date(guess));
-  const p={};
-  parts.forEach(x=>p[x.type]=x.value);
-  const shown=Date.UTC(+p.year,+p.month-1,+p.day,
-   +p.hour,+p.minute,+p.second);
-  guess+=Date.UTC(y,m-1,d)-shown;
- }
- return guess;
+function midnight(day){
+const [y,m,d]=day.split(”-”).map(Number);
+let t=Date.UTC(y,m-1,d);
+for(let i=0;i<5;i++){
+const p=Object.fromEntries(
+new Intl.DateTimeFormat(“en-GB”,{
+timeZone:“Europe/Prague”,year:“numeric”,
+month:“2-digit”,day:“2-digit”,hour:“2-digit”,
+minute:“2-digit”,second:“2-digit”,hourCycle:“h23”
+}).formatToParts(new Date(t))
+.filter(x=>x.type!==“literal”).map(x=>[x.type,Number(x.value)])
+);
+const shown=Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second);
+const diff=Date.UTC(y,m-1,d)-shown;
+t+=diff;
+if(!diff)break;
+}
+return t;
 }
 
 async function get(path){
- const r=await fetch(API+path);
- if(!r.ok)throw Error("HTTP "+r.status);
- const j=await r.json();
- if(j.retCode!==0)throw Error(j.retMsg);
- return j.result;
+const r=await fetch(API+path);
+if(!r.ok)throw Error(“HTTP “+r.status);
+const j=await r.json();
+if(j.retCode!==0)throw Error(j.retMsg||“Помилка Bybit”);
+return j.result;
 }
 
-function loadTouched(day){
- try{
-  const saved=JSON.parse(localStorage.getItem("touched_"+day)||"{}");
-  touched=saved;
- }catch(e){touched={};}
+async function allSymbols(){
+let cursor=””;
+let symbols=[];
+do{
+let url=”/v5/market/instruments-info?category=linear&limit=1000”;
+if(cursor)url+=”&cursor=”+encodeURIComponent(cursor);
+const r=await get(url);
+symbols.push(…r.list.filter(x=>
+x.status===“Trading”&&
+x.symbol.endsWith(“USDT”)&&
+x.contractType===“LinearPerpetual”
+).map(x=>x.symbol));
+cursor=r.nextPageCursor||””;
+document.getElementById(“status”).textContent=
+“Знайдено пар: “+symbols.length;
+}while(cursor);
+return […new Set(symbols)];
 }
 
-function saveTouched(day){
- localStorage.setItem("touched_"+day,JSON.stringify(touched));
+async function levels(symbol,start,end){
+const r=await get(”/v5/market/kline?category=linear&symbol=”+
+symbol+”&interval=15&start=”+start+”&end=”+(end-1)+”&limit=200”);
+const a=r.list||[];
+if(!a.length)return null;
+return {
+symbol,
+high:Math.max(…a.map(x=>Number(x[2]))),
+low:Math.min(…a.map(x=>Number(x[3])))
+};
 }
 
-async function scanTouches(today){
- const start=pragueMidnightUTC(today);
- const end=Date.now();
+async function loadLevels(today,yesterday){
+const symbols=await allSymbols();
+const start=midnight(yesterday);
+const end=midnight(today);
+const result=[];
+let errors=0;
 
- for(let i=0;i<coins.length;i+=8){
-  const batch=coins.slice(i,i+8);
-  await Promise.all(batch.map(async c=>{
-   if(touched[c.symbol])return;
-   try{
-    const k=await get("/v5/market/kline?category=linear&symbol="+
-     c.symbol+"&interval=15&start="+start+"&end="+end+"&limit=200");
-    const hit=k.list.some(x=>
-     Number(x[2])>=c.high || Number(x[3])<=c.low
-    );
-    if(hit)touched[c.symbol]=true;
-   }catch(e){}
-  }));
- }
- saveTouched(today);
- lastTouchScan=Date.now();
+for(let i=0;i<symbols.length;i+=5){
+const batch=symbols.slice(i,i+5);
+const rows=await Promise.all(batch.map(async s=>{
+try{return await levels(s,start,end);}
+catch(e){errors++;return null;}
+}));
+result.push(…rows.filter(Boolean));
+document.getElementById(“status”).textContent=
+“Завантаження рівнів: “+result.length+
+“ / “+symbols.length+” · Помилок: “+errors;
+await new Promise(r=>setTimeout(r,250));
+}
+return result;
 }
 
-async function load(){
- if(loading)return;
- loading=true;
- try{
-  const today=pragueDate();
-  const yesterday=pragueDate(
-   new Date(pragueMidnightUTC(today)-86400000)
-  );
+async function scanCoin(c){
+const r=await get(”/v5/market/kline?category=linear&symbol=”+
+c.symbol+”&interval=15&limit=3”);
+const rows=(r.list||[]).map(x=>({
+time:Number(x[0]),
+high:Number(x[2]),
+low:Number(x[3]),
+close:Number(x[4])
+})).sort((a,b)=>a.time-b.time);
 
-  if(cacheDay!==yesterday){
-   coins=[];
-   cacheDay=yesterday;
-   touched={};
-   loadTouched(today);
-   lastTouchScan=0;
+const closed=rows.filter(x=>x.time+BAR<=Date.now());
+if(closed.length<2)return null;
 
-   const start=pragueMidnightUTC(yesterday);
-   const end=pragueMidnightUTC(today);
-   const instruments=await get(
-    "/v5/market/instruments-info?category=linear&limit=1000"
-   );
-   const symbols=instruments.list
-    .filter(x=>x.status==="Trading"&&x.symbol.endsWith("USDT"))
-    .map(x=>x.symbol);
+const prev=closed[closed.length-2];
+const last=closed[closed.length-1];
 
-   for(let i=0;i<symbols.length;i+=8){
-    const batch=symbols.slice(i,i+8);
-    const rows=await Promise.all(batch.map(async symbol=>{
-     try{
-      const k=await get("/v5/market/kline?category=linear&symbol="+
-       symbol+"&interval=15&start="+start+"&end="+(end-1)+"&limit=200");
-      if(!k.list.length)return null;
-      return {
-       symbol,
-       high:Math.max(...k.list.map(x=>Number(x[2]))),
-       low:Math.min(...k.list.map(x=>Number(x[3])))
-      };
-     }catch(e){return null;}
-    }));
-    coins.push(...rows.filter(Boolean));
-    document.getElementById("status").textContent=
-     "Завантажено рівні: "+coins.length+" / "+symbols.length;
-   }
-  }
+if(prev.close<=c.high&&last.close>c.high){
+return {direction:“LONG”,entry:last.close,level:c.high,time:last.time};
+}
+if(prev.close>=c.low&&last.close<c.low){
+return {direction:“SHORT”,entry:last.close,level:c.low,time:last.time};
+}
+return null;
+}
 
-  const tickers=await get("/v5/market/tickers?category=linear");
-  const prices={};
-  tickers.list.forEach(x=>prices[x.symbol]=Number(x.lastPrice));
-  coins.forEach(c=>c.price=prices[c.symbol]);
+async function refresh(){
+if(loading)return;
+loading=true;
+try{
+const today=pragueDate();
+const yesterday=pragueDate(new Date(midnight(today)-DAY));
 
-  if(Date.now()-lastTouchScan>120000){
-   document.getElementById("status").textContent=
-    "Перевіряю, чи торкалися монети рівнів...";
-   await scanTouches(today);
-  }
+if(cacheDay!==today){
+coins=[];
+signals={};
+try{signals=JSON.parse(localStorage.getItem(“signals_”+today)||”{}”);}
+catch(e){signals={};}
+document.getElementById(“status”).textContent=“Завантаження всіх монет…”;
+coins=await loadLevels(today,yesterday);
+cacheDay=today;
+}
 
-  render();
-  document.getElementById("status").textContent=
-   "День: "+today+" · Монет: "+coins.length+
-   " · Оновлено: "+new Date().toLocaleTimeString();
- }catch(e){
-  document.getElementById("status").textContent="Помилка: "+e.message;
- }
- loading=false;
+const tick=await get(”/v5/market/tickers?category=linear”);
+const prices={};
+tick.list.forEach(x=>prices[x.symbol]=Number(x.lastPrice));
+coins.forEach(c=>c.price=prices[c.symbol]||0);
+
+// Перевіряємо свічки лише для монет поблизу вчорашніх рівнів.
+if(Date.now()-lastScan>=60000){
+const candidates=coins.filter(c=>{
+if(signals[c.symbol]||!c.price)return false;
+const h=Math.abs(c.price-c.high)/c.high100;
+const l=Math.abs(c.price-c.low)/c.low100;
+return h<=1||l<=1||c.price>c.high||c.price<c.low;
+});
+
+let checked=0;
+for(let i=0;i<candidates.length;i+=5){
+await Promise.all(candidates.slice(i,i+5).map(async c=>{
+try{
+const s=await scanCoin(c);
+if(s)signals[c.symbol]=s;
+}catch(e){}
+}));
+checked+=Math.min(5,candidates.length-i);
+document.getElementById(“status”).textContent=
+“Перевірка пробоїв: “+checked+” / “+candidates.length;
+await new Promise(r=>setTimeout(r,250));
+}
+localStorage.setItem(“signals_”+today,JSON.stringify(signals));
+lastScan=Date.now();
+}
+
+render();
+document.getElementById(“status”).textContent=
+“День: “+today+” · Монет: “+coins.length+
+“ · Сигналів: “+Object.keys(signals).length+
+“ · Оновлено: “+new Date().toLocaleTimeString();
+}catch(e){
+document.getElementById(“status”).textContent=“Помилка: “+e.message;
+}
+loading=false;
 }
 
 function render(){
- const q=document.getElementById("search").value.toUpperCase();
- const list=document.getElementById("list");
- list.innerHTML="";
+const q=document.getElementById(“search”).value.toUpperCase();
+const list=document.getElementById(“list”);
+list.innerHTML=””;
 
- coins.filter(c=>
-  c.symbol.includes(q)&&c.price>0&&!touched[c.symbol]
- ).forEach(c=>{
-  const hd=Math.abs(c.price-c.high)/c.high*100;
-  const ld=Math.abs(c.price-c.low)/c.low*100;
-  let signal="";
+const rows=coins.filter(c=>c.symbol.includes(q)&&c.price>0)
+.map(c=>{
+const hd=Math.abs(c.price-c.high)/c.high100;
+const ld=Math.abs(c.price-c.low)/c.low100;
+return {…c,hd,ld};
+})
+.filter(c=>signals[c.symbol]||c.hd<=LIMIT||c.ld<=LIMIT)
+.sort((a,b)=>(signals[b.symbol]?1:0)-(signals[a.symbol]?1:0));
 
-  if(c.price<=c.high&&hd<=LIMIT)
-   signal+='<div class="yellow">⚠️ Близько до максимуму</div>';
-  if(c.price>=c.low&&ld<=LIMIT)
-   signal+='<div class="yellow">⚠️ Близько до мінімуму</div>';
+rows.forEach(c=>{
+const s=signals[c.symbol];
+let info=””;
+if(s){
+const long=s.direction===“LONG”;
+info=’’+
+(long?‘🟢 LONG’:‘🔴 SHORT’)+’’+
+‘Вхід: ‘+s.entry+’’+
+‘Рівень пробою: ‘+s.level+’’+
+‘Час: ‘+new Date(s.time).toLocaleString()+’’+
+‘Сигнал за закритою свічкою. Результат не гарантований.’;
+}else{
+if(c.hd<=LIMIT)info+=’⚠️ Біля максимуму: ‘+c.hd.toFixed(2)+’%’;
+if(c.ld<=LIMIT)info+=’⚠️ Біля мінімуму: ‘+c.ld.toFixed(2)+’%’;
+}
 
-  if(!signal)return;
+list.innerHTML+=`
 
-  list.innerHTML+=`
    <div class="card">
     <b>${c.symbol}</b>
     <p>Ціна: ${c.price}</p>
-    <div class="green">Вчорашній максимум: ${c.high} · ${hd.toFixed(2)}%</div>
-    <div class="red">Вчорашній мінімум: ${c.low} · ${ld.toFixed(2)}%</div>
-    ${signal}
+    <div class="green">Вчорашній максимум: ${c.high} · ${c.hd.toFixed(2)}%</div>
+    <div class="red">Вчорашній мінімум: ${c.low} · ${c.ld.toFixed(2)}%</div>
+    ${info}
    </div>`;
  });
+ if(!rows.length)list.innerHTML='<p class="small">Поки немає монет біля рівнів або сигналів.</p>';
 }
 
-load();
-setInterval(load,30000);
-</script>
+document.getElementById(“search”).addEventListener(“input”,render);
+refresh();
+setInterval(refresh,30000);
 </body>
 </html>
-OCTYPE 
