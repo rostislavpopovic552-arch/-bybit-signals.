@@ -10,21 +10,21 @@ h1{font-size:24px}
 .small{color:#aab5c5}
 button,select{padding:12px;border-radius:8px;border:0;font-size:16px;margin:5px 0}
 button{background:#f0b90b;color:#111;font-weight:bold}
+button:disabled{opacity:.5}
 .card{background:#1b2636;padding:14px;border-radius:10px;margin:12px 0}
 .stat{display:flex;justify-content:space-between;border-bottom:1px solid #344154;padding:8px 0;gap:12px}
-.good{color:#4ade80}.bad{color:#fb7185}
+.good{color:#4ade80}.bad{color:#fb7185}.warn{color:#fbbf24}
 .day{border-bottom:1px solid #344154;padding:10px 0}
 </style>
 </head>
 <body>
 <h1>BYBIT HISTORICAL TEST</h1>
-<p class="small">90 днів · 15-хвилинні свічки · цілі за останні 7 днів · Europe/Prague</p>.
+<p class="small">90 днів · 15-хвилинні свічки · цілі за останні 7 днів · Europe/Prague</p>
 
-<label for="coin">Монета:</label>
-<select id="coin">
+Монета:
 <option>BTCUSDT</option>
 <option>ETHUSDT</option>
-<option>SOLUSDT</option>
+<option selected>SOLUSDT</option>
 <option>XRPUSDT</option>
 <option>DOGEUSDT</option>
 </select>
@@ -32,18 +32,40 @@ button{background:#f0b90b;color:#111;font-weight:bold}
 <button id="start">Почати тест за 90 днів</button>
 <div id="status" class="small"></div>
 <div id="results"></div>
-
 <script>
 const API="https://api.bybit.com/v5/market/kline";
-const INTERVAL=15;
 const DAY=86400000;
 const BAR=15*60000;
 const ZONE="Europe/Prague";
-
+const dateFormatter=new Intl.DateTimeFormat("en-CA",{
+  timeZone:ZONE,year:"numeric",month:"2-digit",day:"2-digit"
+});
 function datePrague(ms){
-  return new Intl.DateTimeFormat("en-CA",{
-    timeZone:ZONE,year:"numeric",month:"2-digit",day:"2-digit"
-  }).format(new Date(ms));
+  return dateFormatter.format(new Date(ms));
+}
+function localMidnight(dateString){
+  const [y,m,d]=dateString.split("-").map(Number);
+  const wanted=Date.UTC(y,m-1,d);
+  let guess=wanted;
+  for(let n=0;n<4;n++){
+    const parts=Object.fromEntries(
+      new Intl.DateTimeFormat("en-US",{
+        timeZone:ZONE,year:"numeric",month:"2-digit",
+        day:"2-digit",hour:"2-digit",minute:"2-digit",
+        second:"2-digit",hourCycle:"h23"
+      }).formatToParts(new Date(guess))
+       .filter(x=>x.type!=="literal")
+       .map(x=>[x.type,Number(x.value)])
+    );
+    const shown=Date.UTC(
+      parts.year,parts.month-1,parts.day,
+      parts.hour,parts.minute,parts.second
+    );
+    const diff=wanted-shown;
+    guess+=diff;
+    if(diff===0) break;
+  }
+  return guess;
 }
 function fmt(n){
   return Number(n).toLocaleString("en-US",{maximumFractionDigits:8});
@@ -54,24 +76,20 @@ async function loadCandles(symbol){
   const start=now-92*DAY;
   let all=[];
   let cursor=start;
-
   while(cursor<end){
     const batchEnd=Math.min(cursor+1000*BAR,end);
     const url=API+"?category=linear&symbol="+symbol+
       "&interval=15&start="+cursor+"&end="+batchEnd+"&limit=1000";
     const response=await fetch(url);
+    if(!response.ok) throw new Error("Помилка мережі Bybit: "+response.status);
     const json=await response.json();
-
     if(json.retCode!==0) throw new Error(json.retMsg||"Помилка Bybit");
-
-    const rows=json.result.list||[];
-    all.push(...rows);
+    all.push(...(json.result.list||[]));
     cursor=batchEnd;
     document.getElementById("status").textContent=
       "Завантаження історії... "+all.length+" свічок";
-    await new Promise(r=>setTimeout(r,150));
+    await new Promise(r=>setTimeout(r,180));
   }
-
   const map=new Map();
   for(const row of all){
     const t=Number(row[0]);
@@ -86,14 +104,41 @@ async function loadCandles(symbol){
   }
   return [...map.values()].sort((a,b)=>a.time-b.time);
 }
-
-// Локальний максимум/мінімум вважається підтвердженим,
-// лише якщо дві свічки праворуч уже закрилися до пробиття.
+function buildDaily(candles){
+  const daily={};
+  for(const c of candles){
+    const d=datePrague(c.time);
+    if(!daily[d]) daily[d]={
+      high:-Infinity,low:Infinity,count:0,
+      first:c.time,last:c.time,valid:true
+    };
+    const x=daily[d];
+    x.high=Math.max(x.high,c.high);
+    x.low=Math.min(x.low,c.low);
+    x.count++;
+    x.first=Math.min(x.first,c.time);
+    x.last=Math.max(x.last,c.time);
+  }
+  for(const d of Object.keys(daily)){
+    const x=daily[d];
+    const start=localMidnight(d);
+    const next=new Date(start+36*60*60*1000);
+    const nextDate=datePrague(next.getTime());
+    const end=localMidnight(nextDate);
+    const expected=(end-start)/BAR;
+    x.valid=
+      x.first===start &&
+      x.last+BAR===end &&
+      x.count===expected;
+  }
+  return daily;
+}
+// Ціль підтверджується двома свічками праворуч,
+// але всі вони мають бути закриті до моменту входу.
 function findTarget(candles,index,direction){
   const entry=candles[index];
   const earliest=Math.max(2,index-7*24*4);
-  let candidates=[];
-
+  const candidates=[];
   for(let i=earliest;i<=index-2;i++){
     const p=candles[i];
     if(direction==="up"){
@@ -114,89 +159,88 @@ function findTarget(candles,index,direction){
       }
     }
   }
-
   if(!candidates.length) return null;
-
-  // Найближчий підтверджений рівень у напрямку руху.
   return direction==="up"
     ? Math.min(...candidates)
     : Math.max(...candidates);
 }
-
 function analyze(candles){
-  const daily={};
-  for(const c of candles){
-    const d=datePrague(c.time);
-    if(!daily[d]) daily[d]={high:-Infinity,low:Infinity};
-    daily[d].high=Math.max(daily[d].high,c.high);
-    daily[d].low=Math.min(daily[d].low,c.low);
-  }
-
-  const dates=Object.keys(daily).sort();
+  const daily=buildDaily(candles);
   const results=[];
   const usedDays=new Set();
-
-  for(let i=0;i<candles.length;i++){
+  // Останні 24 години не тестуємо:
+  // для кожного сигналу потрібні повні 24 години майбутніх даних.
+  for(let i=0;i<candles.length-96;i++){
     const c=candles[i];
     const day=datePrague(c.time);
-    const dayIndex=dates.indexOf(day);
-    if(dayIndex<1||usedDays.has(day)) continue;
-
-    const previous=daily[dates[dayIndex-1]];
+    if(usedDays.has(day)) continue;
+    const previousDate=new Date(
+      localMidnight(day)-DAY
+    );
+    const prevDay=datePrague(previousDate.getTime());
+    const previous=daily[prevDay];
+    if(!previous || !previous.valid) continue;
+    // Не починаємо пошук сигналу раніше початку дня.
+    if(c.time<localMidnight(day)) continue;
     let direction=null;
-
     if(c.close>previous.high) direction="up";
     else if(c.close<previous.low) direction="down";
     if(!direction) continue;
-
+    // Після першого пробиття цього дня інші не перевіряємо.
     usedDays.add(day);
     const target=findTarget(candles,i,direction);
-
     if(target===null){
       results.push({day,direction,status:"noTarget"});
       continue;
     }
-
     let outcome="expired";
-    const limit=Math.min(candles.length-1,i+24*4);
-
-    for(let j=i+1;j<=limit;j++){
+    let complete=true;
+    for(let j=i+1;j<=i+96;j++){
       const next=candles[j];
-
-      // Якщо ціна повернулася за рівень пробиття — хибне пробиття.
-      if(direction==="up" && next.close<previous.high){
+      // Якщо є пропуск у даних, результат не оцінюємо.
+      if(next.time-candles[j-1].time!==BAR){
+        complete=false;
+        outcome="incomplete";
+        break;
+      }
+      const returned=direction==="up"
+        ? next.close<previous.high
+        : next.close>previous.low;
+      const reached=direction==="up"
+        ? next.high>=target
+        : next.low<=target;
+      // В одній свічці невідомо, яка подія сталася першою.
+      if(returned && reached){
+        outcome="ambiguous";
+        break;
+      }
+      if(returned){
         outcome="false";
         break;
       }
-      if(direction==="down" && next.close>previous.low){
-        outcome="false";
-        break;
-      }
-
-      // Перевіряємо досягнення цілі.
-      if(direction==="up" && next.high>=target){
-        outcome="success";
-        break;
-      }
-      if(direction==="down" && next.low<=target){
+      if(reached){
         outcome="success";
         break;
       }
     }
-
-    results.push({day,direction,target,status:outcome});
+    if(!complete && outcome==="incomplete"){
+      results.push({day,direction,target,status:"incomplete"});
+    }else{
+      results.push({day,direction,target,status:outcome});
+    }
   }
   return results;
 }
-
 function showResults(candles,results,symbol){
-  const success=results.filter(x=>x.status==="success").length;
-  const falseBreak=results.filter(x=>x.status==="false").length;
-  const noTarget=results.filter(x=>x.status==="noTarget").length;
-  const expired=results.filter(x=>x.status==="expired").length;
+  const count=s=>results.filter(x=>x.status===s).length;
+  const success=count("success");
+  const falseBreak=count("false");
+  const noTarget=count("noTarget");
+  const expired=count("expired");
+  const ambiguous=count("ambiguous");
+  const incomplete=count("incomplete");
   const evaluated=success+falseBreak+expired;
   const rate=evaluated?100*success/evaluated:0;
-
   let html='<div class="card"><h2>'+symbol+'</h2>';
   const stats=[
     ["Завантажено свічок",candles.length],
@@ -204,35 +248,38 @@ function showResults(candles,results,symbol){
     ["Пробиттів",results.length],
     ["Досягнуто цілі",success],
     ["Хибних пробиттів",falseBreak],
-    ["Не було попередньої цілі",noTarget],
     ["Ціль не досягнута за 24 години",expired],
+    ["Не було попередньої цілі",noTarget],
+    ["Неоднозначні свічки",ambiguous],
+    ["Неповні дані",incomplete],
+    ["Оцінені пробиття",evaluated],
     ["Успішність серед оцінених",evaluated?rate.toFixed(1)+"%":"Немає даних"]
   ];
   for(const [name,value] of stats){
     html+='<div class="stat"><span>'+name+'</span><b>'+value+'</b></div>';
   }
   html+='</div>';
-  html+='<p class="small">Успішність рахується лише серед пробиттів із визначеною ціллю. Це історичний результат, а не гарантія майбутньої угоди.</p>';
+  html+='<p class="small">Успішність рахується лише серед пробиттів із визначеною ціллю та однозначним результатом. Один перший пробій на календарний день. Це історичний тест, не гарантія майбутніх угод.</p>';
   html+='<h2>Результати по днях</h2>';
-
   for(const r of results.slice().reverse()){
     const direction=r.direction==="up"?"Вгору":"Вниз";
-    let label="";
-    if(r.status==="success") label="Ціль досягнута";
-    if(r.status==="false") label="Хибне пробиття";
-    if(r.status==="expired") label="Ціль не досягнута за 24 години";
-    if(r.status==="noTarget") label="Немає попередньої локальної цілі";
-
+    const labels={
+      success:"Ціль досягнута",
+      false:"Хибне пробиття",
+      expired:"Ціль не досягнута за 24 години",
+      noTarget:"Немає попередньої локальної цілі",
+      ambiguous:"Неоднозначно: ціль і повернення в одній свічці",
+      incomplete:"Неповні дані для оцінки"
+    };
     const cls=r.status==="success"?"good":
-      r.status==="false"?"bad":"";
+      r.status==="false"?"bad":
+      r.status==="ambiguous"?"warn":"";
     html+='<div class="day"><b>'+r.day+' · '+direction+'</b><br>';
     if(r.target!==undefined) html+='Ціль: '+fmt(r.target)+' · ';
-    html+='<span class="'+cls+'">'+label+'</span></div>';
+    html+='<span class="'+cls+'">'+labels[r.status]+'</span></div>';
   }
-
   document.getElementById("results").innerHTML=html;
 }
-
 document.getElementById("start").addEventListener("click",async()=>{
   const button=document.getElementById("start");
   const status=document.getElementById("status");
@@ -243,8 +290,8 @@ document.getElementById("start").addEventListener("click",async()=>{
     const symbol=document.getElementById("coin").value;
     status.textContent="Завантажую історичні свічки...";
     const candles=await loadCandles(symbol);
-    if(candles.length<100) throw new Error("Недостатньо історичних даних.");
-    status.textContent="Аналізую пробиття та цілі...";
+    if(candles.length<200) throw new Error("Недостатньо історичних даних.");
+    status.textContent="Перевіряю повні дні та аналізую пробиття...";
     const data=analyze(candles);
     showResults(candles,data,symbol);
     status.textContent="Тест завершено. Свічок: "+candles.length;
