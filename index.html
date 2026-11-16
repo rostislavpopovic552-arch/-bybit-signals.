@@ -65,7 +65,7 @@ async function loadSymbols(){
 let cursor=””,all=[];
 do{
 let url=”/v5/market/instruments-info?category=linear&limit=1000”;
-if(cursor)url+=”&cursor=”+encodeURIComponent(cursor);
+if(cursor)url+=”&cursor=”+curso
 const r=await getJSON(url);
 all=all.concat(r.list||[]);
 cursor=r.nextPageCursor||””;
