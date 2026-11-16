@@ -1,1 +1,135 @@
-
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bybit Signals</title>
+<style>
+body{background:#10151f;color:white;font-family:Arial;padding:16px}
+h2{color:#f7a600}
+.card{background:#1c2635;padding:14px;margin:10px 0;border-radius:10px}
+.green{color:#36d399}.red{color:#ff6464}.yellow{color:#ffc247}
+input{width:100%;padding:12px;box-sizing:border-box;margin:12px 0}
+.small{color:#aaa;font-size:13px}
+</style>
+</head>
+<body>
+<h2>BYBIT SIGNALS</h2>
+<div class="small">USDT Perpetual · Europe/Prague · Поріг 2%</div>
+<div id="status">Завантаження...</div>
+<input id="search" placeholder="Пошук монети..." oninput="render()">
+<div id="list"></div>
+<script>
+const API="https://api.bybit.com";
+const LIMIT=2;
+let coins=[];
+let cacheDay="";
+let loading=false;
+function pragueDate(date=new Date()){
+ return new Intl.DateTimeFormat("en-CA",{
+  timeZone:"Europe/Prague",
+  year:"numeric",month:"2-digit",day:"2-digit"
+ }).format(date);
+}
+function pragueMidnightUTC(day){
+ const [y,m,d]=day.split("-").map(Number);
+ let guess=Date.UTC(y,m-1,d);
+ for(let i=0;i<3;i++){
+  const shown=pragueDate(new Date(guess));
+  const [a,b,c]=shown.split("-").map(Number);
+  const shownUTC=Date.UTC(a,b-1,c);
+  guess+=Date.UTC(y,m-1,d)-shownUTC;
+  const hour=new Intl.DateTimeFormat("en-GB",{
+   timeZone:"Europe/Prague",hour:"2-digit",hourCycle:"h23"
+  }).format(new Date(guess));
+  const minute=new Intl.DateTimeFormat("en-GB",{
+   timeZone:"Europe/Prague",minute:"2-digit"
+  }).format(new Date(guess));
+  const sec=new Intl.DateTimeFormat("en-GB",{
+   timeZone:"Europe/Prague",second:"2-digit"
+  }).format(new Date(guess));
+  const offset=(Number(hour)*3600+Number(minute)*60+Number(sec))*1000;
+  guess=Date.UTC(y,m-1,d)-offset;
+ }
+ return guess;
+}
+async function get(path){
+ const r=await fetch(API+path);
+ if(!r.ok)throw Error("HTTP "+r.status);
+ const j=await r.json();
+ if(j.retCode!==0)throw Error(j.retMsg);
+ return j.result;
+}
+async function load(){
+ if(loading)return;
+ loading=true;
+ try{
+  const today=pragueDate();
+  const yesterdayDate=new Date(pragueMidnightUTC(today)-86400000);
+  const yesterday=pragueDate(yesterdayDate);
+  if(cacheDay!==yesterday){
+   coins=[];
+   cacheDay=yesterday;
+   const start=pragueMidnightUTC(yesterday);
+   const end=pragueMidnightUTC(today);
+   const instruments=await get("/v5/market/instruments-info?category=linear&limit=1000");
+   const symbols=instruments.list
+    .filter(x=>x.status==="Trading"&&x.symbol.endsWith("USDT"))
+    .map(x=>x.symbol);
+   for(let i=0;i<symbols.length;i+=10){
+    const batch=symbols.slice(i,i+10);
+    const rows=await Promise.all(batch.map(async symbol=>{
+     try{
+      const k=await get("/v5/market/kline?category=linear&symbol="+symbol+
+       "&interval=15&start="+start+"&end="+(end-1)+"&limit=1000");
+      if(!k.list.length)return null;
+      const highs=k.list.map(x=>Number(x[2]));
+      const lows=k.list.map(x=>Number(x[3]));
+      return {symbol,high:Math.max(...highs),low:Math.min(...lows)};
+     }catch(e){return null}
+    }));
+    coins.push(...rows.filter(Boolean));
+    document.getElementById("status").textContent=
+     "Рівні: "+coins.length+" / "+symbols.length;
+   }
+  }
+  const tickers=await get("/v5/market/tickers?category=linear");
+  const prices={};
+  tickers.list.forEach(x=>prices[x.symbol]=Number(x.lastPrice));
+  coins.forEach(c=>c.price=prices[c.symbol]);
+  render();
+  document.getElementById("status").textContent=
+   "День: "+cacheDay+" · Монет: "+coins.length+
+   " · Оновлено: "+new Date().toLocaleTimeString();
+ }catch(e){
+  document.getElementById("status").textContent="Помилка: "+e.message;
+ }
+ loading=false;
+}
+function render(){
+ const q=document.getElementById("search").value.toUpperCase();
+ const list=document.getElementById("list");
+ list.innerHTML="";
+ coins.filter(c=>c.symbol.includes(q)&&c.price>0).forEach(c=>{
+  const hd=Math.abs(c.price-c.high)/c.high*100;
+  const ld=Math.abs(c.price-c.low)/c.low*100;
+  let signal="";
+  if(c.price<=c.high&&hd<=LIMIT)
+   signal+='<div class="yellow">⚠️ Близько до максимуму</div>';
+  if(c.price>=c.low&&ld<=LIMIT)
+   signal+='<div class="yellow">⚠️ Близько до мінімуму</div>';
+  list.innerHTML+=`
+   <div class="card">
+    <b>${c.symbol}</b>
+    <p>Ціна: ${c.price}</p>
+    <div class="green">Вчорашній максимум: ${c.high} · ${hd.toFixed(2)}%</div>
+    <div class="red">Вчорашній мінімум: ${c.low} · ${ld.toFixed(2)}%</div>
+    ${signal}
+   </div>`;
+ });
+}
+load();
+setInterval(load,30000);
+</script>
+</body>
+</html>
