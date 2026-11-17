@@ -38,7 +38,9 @@ const $ = id => document.getElementById(id);
 
 const TP_OFFSET = 0.002;
 const SL_RATIO = 3;
-const STORAGE_KEY = "bybitSignals_v3";
+const MIN_PROFIT_PERCENT = 0.30;
+const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
+const STORAGE_KEY = "bybitSignals_v4";
 
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
@@ -55,7 +57,8 @@ const NON_CRYPTO = new Set([
   "EURUSD","GBPUSD","USDJPY","AUDUSD","NZDUSD","USDCAD",
   "USDCHF","XAU","XAG","WTI","BRENT",
   "BTDR","FLNC","HANMI","RAM","MDB","HD","ACN",
-  "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK"
+  "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK",
+  "ALAB","SOFI","SNOW"
 ]);
 
 let symbols = [];
@@ -67,6 +70,14 @@ let busy = false;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function signalIsFresh(s) {
+  const timestamp = Number(s && s.candleTime);
+  return Number.isFinite(timestamp) &&
+    timestamp > 0 &&
+    Date.now() - timestamp <= MAX_SIGNAL_AGE_MS &&
+    Date.now() >= timestamp;
+}
+
 function validSignal(s) {
   return s &&
     typeof s.symbol === "string" &&
@@ -77,7 +88,10 @@ function validSignal(s) {
     Number.isFinite(Number(s.sl)) &&
     Number(s.price) > 0 &&
     Number(s.tp) > 0 &&
-    Number(s.sl) > 0;
+    Number(s.sl) > 0 &&
+    Number(s.target) > 0 &&
+    Number(s.profitPercent) >= MIN_PROFIT_PERCENT &&
+    signalIsFresh(s);
 }
 
 function todayKey() {
@@ -351,13 +365,10 @@ async function calculateTradeLevels(symbol,side,entry) {
 }
 
 function render() {
-  const recent = signals
-    .filter(validSignal)
-    .slice(-30)
-    .reverse();
+  signals = signals.filter(validSignal);
 
-  $("signals").innerHTML = recent.length
-    ? recent.map(s => `
+  $("signals").innerHTML = signals.length
+    ? signals.slice(-30).reverse().map(s => `
       <div class="card">
         <b class="${s.side==="LONG"?"green":"red"}">
           ${s.side} — ${s.symbol}
@@ -372,7 +383,9 @@ function render() {
         <span class="small">${s.time || ""}</span>
       </div>
     `).join("")
-    : "<div class='info'>Підтверджених сигналів із розрахованими рівнями поки немає.</div>";
+    : "<div class='info'>Актуальних сигналів із прибутком від 0,30% поки немає.</div>";
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(signals));
 
   const near = symbols
     .filter(s => levels[s] && prices[s] > 0)
@@ -472,8 +485,12 @@ async function checkOneSignal(symbol) {
 
   if (!side) return;
 
+  const candleTime = Number(candle[0]);
+  if (!Number.isFinite(candleTime) ||
+      Date.now()-candleTime > MAX_SIGNAL_AGE_MS) return;
+
   const key =
-    todayKey()+"_"+symbol+"_"+side+"_"+candle[0];
+    todayKey()+"_"+symbol+"_"+side+"_"+candleTime;
 
   if (signals.some(s => s.key === key)) return;
 
@@ -485,16 +502,7 @@ async function checkOneSignal(symbol) {
     return;
   }
 
-  if (!trade || !validSignal({
-    symbol,
-    side,
-    price:trade.entry,
-    target:trade.target,
-    tp:trade.tp,
-    sl:trade.sl
-  })) {
-    return;
-  }
+  if (!trade) return;
 
   const profitPercent = (
     Math.abs(trade.tp-trade.entry)/trade.entry*100
@@ -503,6 +511,8 @@ async function checkOneSignal(symbol) {
   const riskPercent = (
     Math.abs(trade.entry-trade.sl)/trade.entry*100
   ).toFixed(2);
+
+  if (Number(profitPercent) < MIN_PROFIT_PERCENT) return;
 
   const signal = {
     key,
@@ -515,7 +525,8 @@ async function checkOneSignal(symbol) {
     sl:trade.sl,
     profitPercent,
     riskPercent,
-    time:new Date(Number(candle[0])).toLocaleString("uk-UA",{
+    candleTime,
+    time:new Date(candleTime).toLocaleString("uk-UA",{
       timeZone:"Europe/Prague"
     })
   };
@@ -572,7 +583,6 @@ async function checkSignals() {
 
 async function start() {
   try {
-    // Завантажуємо тільки сигнали з правильними числовими рівнями.
     try {
       const saved = JSON.parse(
         localStorage.getItem(STORAGE_KEY) || "[]"
