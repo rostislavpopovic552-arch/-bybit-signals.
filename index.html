@@ -17,16 +17,21 @@ h1{color:#f0b90b;margin:8px 0}
 </style>
 </head>
 <body>
+
 <h1>BYBIT SIGNALS</h1>
-<div class="info">USDT Perpetual · Europe/Prague · 15 хв</div>
+<div class="info">USDT Perpetual · Europe/Prague · рівні 15 хв · ціна REAL-TIME</div>
 <div id="status">Підготовка...</div>
+
 <div id="progress">
   <div id="progressText">Завантаження монет...</div>
   <div id="bar"><div id="fill"></div></div>
 </div>
+
 <div class="info" id="summary"></div>
+
 <h2>Сигнали</h2>
 <div id="signals">Очікування даних...</div>
+
 <h2>Монети біля рівнів</h2>
 <div id="coins"></div>
 
@@ -34,6 +39,8 @@ h1{color:#f0b90b;margin:8px 0}
 "use strict";
 
 const API = "https://api.bybit.com";
+const WS_URL = "wss://stream.bybit.com/v5/public/linear";
+
 const $ = id => document.getElementById(id);
 
 const TP_OFFSET = 0.002;
@@ -41,6 +48,23 @@ const SL_RATIO = 3;
 const MIN_PROFIT_PERCENT = 0.30;
 const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
 const STORAGE_KEY = "bybitSignals_v4";
+
+let symbols = [];
+let prices = {};
+let levels = {};
+let signals = [];
+let completed = 0;
+
+let tickerSocket = null;
+let reconnectTimer = null;
+let pingTimer = null;
+let renderTimer = null;
+
+let reconnectDelay = 2000;
+let wsBaseline = new Set();
+let pendingSignals = new Set();
+let lastSignalAttempts = new Map();
+let firstWsPriceReceived = false;
 
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
@@ -61,17 +85,11 @@ const NON_CRYPTO = new Set([
   "ALAB","SOFI","SNOW"
 ]);
 
-let symbols = [];
-let prices = {};
-let levels = {};
-let signals = [];
-let completed = 0;
-let busy = false;
-
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function signalIsFresh(s) {
   const timestamp = Number(s && s.candleTime);
+
   return Number.isFinite(timestamp) &&
     timestamp > 0 &&
     Date.now() - timestamp <= MAX_SIGNAL_AGE_MS &&
@@ -111,8 +129,12 @@ function pragueMidnight(dateText) {
   for (let i=0;i<3;i++) {
     const parts = new Intl.DateTimeFormat("en-GB", {
       timeZone:"Europe/Prague",
-      year:"numeric",month:"2-digit",day:"2-digit",
-      hour:"2-digit",minute:"2-digit",second:"2-digit",
+      year:"numeric",
+      month:"2-digit",
+      day:"2-digit",
+      hour:"2-digit",
+      minute:"2-digit",
+      second:"2-digit",
       hourCycle:"h23"
     }).formatToParts(new Date(guess));
 
@@ -120,8 +142,12 @@ function pragueMidnight(dateText) {
     parts.forEach(p => v[p.type]=p.value);
 
     const shown = Date.UTC(
-      Number(v.year),Number(v.month)-1,Number(v.day),
-      Number(v.hour),Number(v.minute),Number(v.second)
+      Number(v.year),
+      Number(v.month)-1,
+      Number(v.day),
+      Number(v.hour),
+      Number(v.minute),
+      Number(v.second)
     );
 
     guess += target-shown;
@@ -153,8 +179,7 @@ function isCryptoContract(x) {
   const isForex =
     /^(EUR|GBP|USD|JPY|AUD|NZD|CAD|CHF){2}$/.test(base);
 
-  const isStock =
-    base.includes("STOCK");
+  const isStock = base.includes("STOCK");
 
   return x.status === "Trading" &&
     x.quoteCoin === "USDT" &&
@@ -171,13 +196,15 @@ async function loadSymbols() {
   const all = [];
 
   do {
-    let url = "/v5/market/instruments-info?category=linear&limit=1000";
+    let url =
+      "/v5/market/instruments-info?category=linear&limit=1000";
 
     if (cursor) {
       url += "&cursor=" + encodeURIComponent(cursor);
     }
 
     const result = await getJSON(url);
+
     all.push(...(result.list || []));
     cursor = result.nextPageCursor || "";
 
@@ -190,7 +217,9 @@ async function loadSymbols() {
 }
 
 async function loadPrices() {
-  const result = await getJSON("/v5/market/tickers?category=linear");
+  const result = await getJSON(
+    "/v5/market/tickers?category=linear"
+  );
 
   prices = {};
 
@@ -202,10 +231,12 @@ async function loadPrices() {
 }
 
 async function loadOneLevel(symbol,startTime,endTime) {
-  const url = "/v5/market/kline?category=linear" +
+  const url =
+    "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&start=" + startTime +
-    "&end=" + endTime + "&limit=100";
+    "&end=" + endTime +
+    "&limit=100";
 
   const result = await getJSON(url);
   const candles = result.list || [];
@@ -229,7 +260,8 @@ async function loadOneLevel(symbol,startTime,endTime) {
 
 function updateProgress() {
   const percent = symbols.length
-    ? Math.round(completed/symbols.length*100) : 0;
+    ? Math.round(completed/symbols.length*100)
+    : 0;
 
   $("fill").style.width = percent + "%";
 
@@ -247,18 +279,24 @@ async function worker(queue,startTime,endTime) {
     const symbol = queue.shift();
 
     try {
-      const level = await loadOneLevel(symbol,startTime,endTime);
+      const level = await loadOneLevel(
+        symbol,startTime,endTime
+      );
+
       if (level) levels[symbol] = level;
+
     } catch(error) {}
 
     completed++;
     updateProgress();
+
     await sleep(250);
   }
 }
 
 async function calculateTradeLevels(symbol,side,entry) {
-  const url = "/v5/market/kline?category=linear" +
+  const url =
+    "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&limit=100";
 
@@ -307,13 +345,17 @@ async function calculateTradeLevels(symbol,side,entry) {
       Number(last24h[i+2][3])
     ];
 
-    if (prevHighs.every(v => h > v) &&
-        nextHighs.every(v => h >= v)) {
+    if (
+      prevHighs.every(v => h > v) &&
+      nextHighs.every(v => h >= v)
+    ) {
       highs.push(h);
     }
 
-    if (prevLows.every(v => l < v) &&
-        nextLows.every(v => l <= v)) {
+    if (
+      prevLows.every(v => l < v) &&
+      nextLows.every(v => l <= v)
+    ) {
       lows.push(l);
     }
   }
@@ -375,8 +417,12 @@ function render() {
         </b><br>
         Ціна входу: ${Number(s.price)}<br>
         Локальний рівень: ${Number(s.target)}<br>
-        <span class="green">Take Profit: ${Number(s.tp)}</span><br>
-        <span class="red">Stop Loss: ${Number(s.sl)}</span><br>
+        <span class="green">
+          Take Profit: ${Number(s.tp)}
+        </span><br>
+        <span class="red">
+          Stop Loss: ${Number(s.sl)}
+        </span><br>
         Потенційний прибуток: ${s.profitPercent}%<br>
         Потенційний ризик: ${s.riskPercent}%<br>
         Співвідношення прибуток/ризик: 3:1<br>
@@ -385,7 +431,10 @@ function render() {
     `).join("")
     : "<div class='info'>Актуальних сигналів із прибутком від 0,30% поки немає.</div>";
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(signals));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(signals)
+  );
 
   const near = symbols
     .filter(s => levels[s] && prices[s] > 0)
@@ -397,7 +446,11 @@ function render() {
       const dl = (price-level.low)/price*100;
 
       return {
-        symbol:s,price,level,dh,dl,
+        symbol:s,
+        price,
+        level,
+        dh,
+        dl,
         dist:Math.min(Math.abs(dh),Math.abs(dl))
       };
     })
@@ -417,252 +470,47 @@ function render() {
     : "<div class='info'>Монет біля рівнів зараз немає.</div>";
 }
 
-async function checkOneSignal(symbol) {
-  const url = "/v5/market/kline?category=linear" +
-    "&symbol=" + encodeURIComponent(symbol) +
-    "&interval=15&limit=25";
+function scheduleRender() {
+  if (renderTimer) return;
 
-  const result = await getJSON(url);
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    render();
+  },1000);
+}
 
-  const candles = (result.list || [])
-    .slice()
-    .sort((a,b) => Number(a[0])-Number(b[0]));
+function hasRecentSignal(symbol,side) {
+  return signals.some(s =>
+    s.symbol === symbol &&
+    s.side === side &&
+    Date.now()-Number(s.candleTime) < MAX_SIGNAL_AGE_MS
+  );
+}
 
-  if (candles.length < 22) return;
-
-  const closedIndex = candles.length-2;
-  const previous = candles[closedIndex-1];
-  const candle = candles[closedIndex];
+function handleLivePrice(symbol,previousPrice,currentPrice) {
   const level = levels[symbol];
 
   if (!level) return;
 
-  const open = Number(candle[1]);
-  const high = Number(candle[2]);
-  const low = Number(candle[3]);
-  const close = Number(candle[4]);
-  const volume = Number(candle[5]);
-  const previousClose = Number(previous[4]);
-
-  const range = high-low;
-
-  if (range <= 0 || volume <= 0) return;
-
-  const body = Math.abs(close-open);
-  const bodyRatio = body/range;
-
-  if (bodyRatio < 0.5) return;
-
-  const older = candles.slice(
-    Math.max(0,closedIndex-20),
-    closedIndex
-  );
-
-  if (older.length < 15) return;
-
-  const averageVolume =
-    older.reduce((sum,c) => sum+Number(c[5]),0)/older.length;
-
-  if (averageVolume <= 0) return;
-  if (volume < averageVolume*1.2) return;
+  if (
+    !Number.isFinite(previousPrice) ||
+    !Number.isFinite(currentPrice) ||
+    previousPrice <= 0 ||
+    currentPrice <= 0
+  ) {
+    return;
+  }
 
   let side = "";
   let breakoutLevel = 0;
 
-  if (previousClose <= level.high &&
-      close > level.high*1.001 &&
-      close > open) {
+  if (
+    previousPrice <= level.high &&
+    currentPrice > level.high*1.001
+  ) {
     side = "LONG";
     breakoutLevel = level.high;
   }
 
-  if (previousClose >= level.low &&
-      close < level.low*0.999 &&
-      close < open) {
-    side = "SHORT";
-    breakoutLevel = level.low;
-  }
-
-  if (!side) return;
-
-  const candleTime = Number(candle[0]);
-  if (!Number.isFinite(candleTime) ||
-      Date.now()-candleTime > MAX_SIGNAL_AGE_MS) return;
-
-  const key =
-    todayKey()+"_"+symbol+"_"+side+"_"+candleTime;
-
-  if (signals.some(s => s.key === key)) return;
-
-  let trade = null;
-
-  try {
-    trade = await calculateTradeLevels(symbol,side,close);
-  } catch(error) {
-    return;
-  }
-
-  if (!trade) return;
-
-  const profitPercent = (
-    Math.abs(trade.tp-trade.entry)/trade.entry*100
-  ).toFixed(2);
-
-  const riskPercent = (
-    Math.abs(trade.entry-trade.sl)/trade.entry*100
-  ).toFixed(2);
-
-  if (Number(profitPercent) < MIN_PROFIT_PERCENT) return;
-
-  const signal = {
-    key,
-    symbol,
-    side,
-    price:trade.entry,
-    level:breakoutLevel,
-    target:trade.target,
-    tp:trade.tp,
-    sl:trade.sl,
-    profitPercent,
-    riskPercent,
-    candleTime,
-    time:new Date(candleTime).toLocaleString("uk-UA",{
-      timeZone:"Europe/Prague"
-    })
-  };
-
-  if (!validSignal(signal)) return;
-
-  signals.push(signal);
-  signals = signals.filter(validSignal).slice(-200);
-
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(signals)
-  );
-}
-
-async function checkSignals() {
-  if (busy) return;
-
-  busy = true;
-
-  try {
-    await loadPrices();
-
-    const candidates = symbols.filter(s => levels[s]);
-
-    for (let i=0;i<candidates.length;i+=5) {
-      const batch = candidates.slice(i,i+5);
-
-      await Promise.all(batch.map(async symbol => {
-        try {
-          await checkOneSignal(symbol);
-        } catch(error) {}
-      }));
-
-      await sleep(200);
-    }
-
-    render();
-
-    $("status").textContent =
-      "Сканування активне · Оновлено: " +
-      new Date().toLocaleTimeString("uk-UA",{
-        timeZone:"Europe/Prague"
-      });
-
-  } catch(error) {
-    $("status").textContent =
-      "Помилка оновлення: " + error.message;
-
-  } finally {
-    busy = false;
-  }
-}
-
-async function start() {
-  try {
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem(STORAGE_KEY) || "[]"
-      );
-
-      signals = Array.isArray(saved)
-        ? saved.filter(validSignal)
-        : [];
-
-    } catch(error) {
-      signals = [];
-    }
-
-    $("status").textContent = "Завантаження криптовалют...";
-
-    symbols = await loadSymbols();
-
-    $("summary").textContent =
-      "Знайдено контрактів: " + symbols.length;
-
-    await loadPrices();
-    render();
-
-    const today = todayKey();
-
-    const yesterday = new Date(
-      pragueMidnight(today)-86400000
-    );
-
-    const yesterdayText = new Intl.DateTimeFormat("en-CA",{
-      timeZone:"Europe/Prague",
-      year:"numeric",month:"2-digit",day:"2-digit"
-    }).format(yesterday);
-
-    const startTime = pragueMidnight(yesterdayText);
-    const endTime = pragueMidnight(today)-1;
-
-    completed = 0;
-
-    $("status").textContent =
-      "Завантажую вчорашні рівні...";
-
-    const queue = symbols.slice();
-
-    await Promise.all([
-      worker(queue,startTime,endTime),
-      worker(queue,startTime,endTime),
-      worker(queue,startTime,endTime)
-    ]);
-
-    updateProgress();
-    render();
-
-    $("status").textContent =
-      "Усі рівні завантажені. Сканування активне.";
-
-    await checkSignals();
-
-    setInterval(checkSignals,60000);
-
-    setInterval(async () => {
-      try {
-        await loadPrices();
-        render();
-      } catch(error) {
-        $("status").textContent =
-          "Помилка цін: " + error.message;
-      }
-    },30000);
-
-  } catch(error) {
-    $("status").textContent =
-      "Помилка: " + error.message;
-
-    $("progressText").textContent =
-      "Не вдалося завершити завантаження.";
-  }
-}
-
-start();
-</script>
-</body>
-</html>
+  if (
+   
