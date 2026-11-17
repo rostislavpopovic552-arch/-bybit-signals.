@@ -44,7 +44,10 @@ const NON_CRYPTO = new Set([
   "GS","V","MA","WMT","COST","KO","PEP","JNJ","PFE",
   "MRK","ABBV","LLY","ISRG","IBM","CRM","FUTU","MEITUAN",
   "BYD","IWM","TZA","TBT","EWZ","XLI","RDW","FISV",
-  "EURUSD","GBPUSD","USDJPY","XAU","XAG","WTI","BRENT"
+  "EURUSD","GBPUSD","USDJPY","AUDUSD","NZDUSD","USDCAD",
+  "USDCHF","XAU","XAG","WTI","BRENT",
+  "BTDR","FLNC","HANMI","RAM","MDB","HD","ACN",
+  "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK"
 ]);
 let symbols = [];
 let prices = {};
@@ -96,12 +99,19 @@ async function getJSON(path) {
 function isCryptoContract(x) {
   const base = String(x.baseCoin || "").toUpperCase();
   const symbol = String(x.symbol || "").toUpperCase();
+  const isForex =
+    /^(EUR|GBP|USD|JPY|AUD|NZD|CAD|CHF){2}$/.test(base);
+  const isStock =
+    base.endsWith("STOCK") ||
+    base.includes("STOCK");
   return x.status === "Trading" &&
     x.quoteCoin === "USDT" &&
     x.contractType === "LinearPerpetual" &&
     symbol === base + "USDT" &&
     !STABLECOINS.has(base) &&
-    !NON_CRYPTO.has(base);
+    !NON_CRYPTO.has(base) &&
+    !isForex &&
+    !isStock;
 }
 async function loadSymbols() {
   let cursor = "";
@@ -149,7 +159,7 @@ function updateProgress() {
     ? Math.round(completed/symbols.length*100) : 0;
   $("fill").style.width = percent + "%";
   $("progressText").textContent =
-    "Рівні завантажено: " + completed + " із " + symbols.length +
+    "Рівнів завантажено: " + completed + " із " + symbols.length +
     " (" + percent + "%)";
   $("summary").textContent =
     "Криптовалют: " + symbols.length +
