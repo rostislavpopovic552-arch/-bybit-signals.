@@ -33,6 +33,8 @@ h1{color:#f0b90b;margin:8px 0}
 "use strict";
 const API = "https://api.bybit.com";
 const $ = id => document.getElementById(id);
+const TP_OFFSET = 0.002; // 0,2% перед локальним рівнем
+const SL_RATIO = 3;      // прибуток : ризик = 3 : 1
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
   "USDP","PYUSD","RLUSD","USD1","USDD","USTC"
@@ -177,6 +179,89 @@ async function worker(queue,startTime,endTime) {
     await sleep(250);
   }
 }
+/*
+  Шукаємо підтверджені локальні максимуми та мінімуми
+  за останні 24 години на 15-хвилинних свічках.
+  Локальний максимум: high вищий за два попередні
+  та два наступні максимуми.
+  Локальний мінімум: low нижчий за два попередні
+  та два наступні мінімуми.
+*/
+async function calculateTradeLevels(symbol,side,entry) {
+  const url = "/v5/market/kline?category=linear" +
+    "&symbol=" + encodeURIComponent(symbol) +
+    "&interval=15&limit=100";
+  const result = await getJSON(url);
+  const candles = (result.list || [])
+    .slice()
+    .sort((a,b) => Number(a[0])-Number(b[0]));
+  // Останню свічку не беремо, бо вона ще може формуватися.
+  const closed = candles.slice(0,-1);
+  if (closed.length < 10) return null;
+  const now = Date.now();
+  const last24h = closed.filter(c =>
+    Number(c[0]) >= now - 24*60*60*1000
+  );
+  if (last24h.length < 10) return null;
+  const highs = [];
+  const lows = [];
+  for (let i=2; i<last24h.length-2; i++) {
+    const h = Number(last24h[i][2]);
+    const l = Number(last24h[i][3]);
+    const prevHighs = [
+      Number(last24h[i-2][2]),
+      Number(last24h[i-1][2])
+    ];
+    const nextHighs = [
+      Number(last24h[i+1][2]),
+      Number(last24h[i+2][2])
+    ];
+    const prevLows = [
+      Number(last24h[i-2][3]),
+      Number(last24h[i-1][3])
+    ];
+    const nextLows = [
+      Number(last24h[i+1][3]),
+      Number(last24h[i+2][3])
+    ];
+    if (prevHighs.every(v => h > v) &&
+        nextHighs.every(v => h >= v)) {
+      highs.push(h);
+    }
+    if (prevLows.every(v => l < v) &&
+        nextLows.every(v => l <= v)) {
+      lows.push(l);
+    }
+  }
+  let target = 0;
+  let tp = 0;
+  let sl = 0;
+  if (side === "LONG") {
+    // Найближчий локальний максимум вище ціни входу.
+    const candidates = highs
+      .filter(h => h > entry)
+      .sort((a,b) => a-b);
+    if (!candidates.length) return null;
+    target = candidates[0];
+    tp = target * (1 - TP_OFFSET);
+    if (tp <= entry) return null;
+    const risk = (tp-entry)/SL_RATIO;
+    sl = entry-risk;
+  } else {
+    // Найближчий локальний мінімум нижче ціни входу.
+    const candidates = lows
+      .filter(l => l < entry)
+      .sort((a,b) => b-a);
+    if (!candidates.length) return null;
+    target = candidates[0];
+    tp = target * (1 + TP_OFFSET);
+    if (tp >= entry) return null;
+    const risk = (entry-tp)/SL_RATIO;
+    sl = entry+risk;
+  }
+  if (![entry,tp,sl,target].every(Number.isFinite)) return null;
+  return {entry,tp,sl,target};
+}
 function render() {
   const recent = signals.slice(-30).reverse();
   $("signals").innerHTML = recent.length
@@ -185,8 +270,13 @@ function render() {
         <b class="${s.side==="LONG"?"green":"red"}">
           ${s.side} — ${s.symbol}
         </b><br>
-        Ціна пробою: ${s.price}<br>
-        Рівень учора: ${s.level}<br>
+        Ціна входу: ${s.price}<br>
+        Локальний рівень: ${s.target}<br>
+        <span class="green">Take Profit: ${s.tp}</span><br>
+        <span class="red">Stop Loss: ${s.sl}</span><br>
+        Потенційний прибуток: ${s.profitPercent}%<br>
+        Потенційний ризик: ${s.riskPercent}%<br>
+        Співвідношення прибуток/ризик: 3:1<br>
         <span class="small">${s.time}</span>
       </div>
     `).join("")
@@ -268,16 +358,41 @@ async function checkOneSignal(symbol) {
   if (!side) return;
   const key = todayKey()+"_"+symbol+"_"+side+"_"+candle[0];
   if (signals.some(s => s.key === key)) return;
+  // Розраховуємо TP і SL за локальними рівнями.
+  let trade = null;
+  try {
+    trade = await calculateTradeLevels(symbol,side,close);
+  } catch(error) {
+    return;
+  }
+  // Якщо немає відповідного локального рівня, сигнал пропускаємо.
+  if (!trade) return;
+  const profitPercent = (
+    Math.abs(trade.tp-trade.entry)/trade.entry*100
+  ).toFixed(2);
+  const riskPercent = (
+    Math.abs(trade.entry-trade.sl)/trade.entry*100
+  ).toFixed(2);
   signals.push({
-    key,symbol,side,
-    price:close,
+    key,
+    symbol,
+    side,
+    price:trade.entry,
     level:breakoutLevel,
+    target:trade.target,
+    tp:trade.tp,
+    sl:trade.sl,
+    profitPercent,
+    riskPercent,
     time:new Date(Number(candle[0])).toLocaleString("uk-UA",{
       timeZone:"Europe/Prague"
     })
   });
   signals = signals.slice(-200);
-  localStorage.setItem("bybitSignals_v2",JSON.stringify(signals));
+  localStorage.setItem(
+    "bybitSignals_v2",
+    JSON.stringify(signals)
+  );
 }
 async function checkSignals() {
   if (busy) return;
@@ -308,7 +423,9 @@ async function checkSignals() {
 }
 async function start() {
   try {
-    signals = JSON.parse(localStorage.getItem("bybitSignals_v2") || "[]");
+    signals = JSON.parse(
+      localStorage.getItem("bybitSignals_v2") || "[]"
+    );
     $("status").textContent = "Завантаження криптовалют...";
     symbols = await loadSymbols();
     $("summary").textContent =
