@@ -65,6 +65,7 @@ let symbols = [];
 let prices = {};
 let levels = {};
 let signals = [];
+let priceTickSizes = {};
 
 let completed = 0;
 let failed = 0;
@@ -112,6 +113,31 @@ function showError(error) {
   setStatus("Помилка: " + message);
   $("progressText").textContent =
     "Завантаження зупинено. Натисни «Перезапустити сканер».";
+}
+
+/* Форматування тільки для показу.
+   На торгові розрахунки ця функція не впливає. */
+function formatPrice(symbol, value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return String(value);
+
+  const tickSize = priceTickSizes[symbol];
+
+  if (!tickSize) return String(number);
+
+  const text = String(tickSize).toLowerCase();
+  const parts = text.split("e");
+
+  const coefficient = parts[0];
+  const exponent = parts.length > 1
+    ? Number(parts[1])
+    : 0;
+
+  const decimalPart = coefficient.split(".")[1] || "";
+  const decimals = Math.max(0, decimalPart.length - exponent);
+
+  return number.toFixed(Math.min(decimals, 20));
 }
 
 function pragueDate(date) {
@@ -271,6 +297,18 @@ async function loadSymbols() {
 
 async function loadTickers(contracts) {
   setStatus("Завантажую поточні ціни Bybit...");
+
+  /* Зберігаємо крок ціни кожної монети з Bybit */
+  priceTickSizes = {};
+
+  contracts.forEach(contract => {
+    const tickSize = contract.priceFilter &&
+      contract.priceFilter.tickSize;
+
+    if (tickSize && Number(tickSize) > 0) {
+      priceTickSizes[contract.symbol] = String(tickSize);
+    }
+  });
 
   const result = await getJSON(
     "/v5/market/tickers?category=linear"
@@ -691,13 +729,13 @@ function render() {
         <b class="${s.side==="LONG"?"green":"red"}">
           ${s.side} — ${s.symbol}
         </b><br>
-        Ціна входу: ${Number(s.price)}<br>
-        Локальний рівень: ${Number(s.target)}<br>
+        Ціна входу: ${formatPrice(s.symbol,s.price)}<br>
+        Локальний рівень: ${formatPrice(s.symbol,s.target)}<br>
         <span class="green">
-          Take Profit: ${Number(s.tp)}
+          Take Profit: ${formatPrice(s.symbol,s.tp)}
         </span><br>
         <span class="red">
-          Stop Loss: ${Number(s.sl)}
+          Stop Loss: ${formatPrice(s.symbol,s.sl)}
         </span><br>
         Потенційний прибуток: ${s.profitPercent}%<br>
         Потенційний ризик: ${s.riskPercent}%<br>
@@ -735,10 +773,10 @@ function render() {
     ? near.map(x => `
       <div class="card">
         <b>${x.symbol}</b><br>
-        Ціна: ${x.price}<br>
-        Максимум попереднього дня: ${x.level.high}
+        Ціна: ${formatPrice(x.symbol,x.price)}<br>
+        Максимум попереднього дня: ${formatPrice(x.symbol,x.level.high)}
         · ${x.dh.toFixed(2)}%<br>
-        Мінімум попереднього дня: ${x.level.low}
+        Мінімум попереднього дня: ${formatPrice(x.symbol,x.level.low)}
         · ${x.dl.toFixed(2)}%
       </div>
     `).join("")
