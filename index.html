@@ -29,16 +29,22 @@ h1{color:#f0b90b;margin:8px 0}
 <div id="signals">Очікування даних...</div>
 <h2>Монети біля рівнів</h2>
 <div id="coins"></div>
+
 <script>
 "use strict";
+
 const API = "https://api.bybit.com";
 const $ = id => document.getElementById(id);
-const TP_OFFSET = 0.002; // 0,2% перед локальним рівнем
-const SL_RATIO = 3;      // прибуток : ризик = 3 : 1
+
+const TP_OFFSET = 0.002;
+const SL_RATIO = 3;
+const STORAGE_KEY = "bybitSignals_v3";
+
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
   "USDP","PYUSD","RLUSD","USD1","USDD","USTC"
 ]);
+
 const NON_CRYPTO = new Set([
   "MSFT","SPY","QQQ","AAPL","TSLA","NVDA","AMZN","META",
   "GOOGL","GOOG","MSTR","COIN","MARA","PLTR","AMD","INTC",
@@ -51,13 +57,29 @@ const NON_CRYPTO = new Set([
   "BTDR","FLNC","HANMI","RAM","MDB","HD","ACN",
   "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK"
 ]);
+
 let symbols = [];
 let prices = {};
 let levels = {};
 let signals = [];
 let completed = 0;
 let busy = false;
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function validSignal(s) {
+  return s &&
+    typeof s.symbol === "string" &&
+    (s.side === "LONG" || s.side === "SHORT") &&
+    Number.isFinite(Number(s.price)) &&
+    Number.isFinite(Number(s.target)) &&
+    Number.isFinite(Number(s.tp)) &&
+    Number.isFinite(Number(s.sl)) &&
+    Number(s.price) > 0 &&
+    Number(s.tp) > 0 &&
+    Number(s.sl) > 0;
+}
+
 function todayKey() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Prague",
@@ -66,10 +88,12 @@ function todayKey() {
     day: "2-digit"
   }).format(new Date());
 }
+
 function pragueMidnight(dateText) {
   const [y,m,d] = dateText.split("-").map(Number);
   const target = Date.UTC(y,m-1,d);
   let guess = target;
+
   for (let i=0;i<3;i++) {
     const parts = new Intl.DateTimeFormat("en-GB", {
       timeZone:"Europe/Prague",
@@ -77,35 +101,47 @@ function pragueMidnight(dateText) {
       hour:"2-digit",minute:"2-digit",second:"2-digit",
       hourCycle:"h23"
     }).formatToParts(new Date(guess));
+
     const v = {};
     parts.forEach(p => v[p.type]=p.value);
+
     const shown = Date.UTC(
       Number(v.year),Number(v.month)-1,Number(v.day),
       Number(v.hour),Number(v.minute),Number(v.second)
     );
+
     guess += target-shown;
   }
+
   return guess;
 }
+
 async function getJSON(path) {
   const response = await fetch(API + path);
+
   if (!response.ok) {
     throw new Error("HTTP " + response.status);
   }
+
   const json = await response.json();
+
   if (json.retCode !== 0) {
     throw new Error(json.retMsg || "Помилка Bybit");
   }
+
   return json.result;
 }
+
 function isCryptoContract(x) {
   const base = String(x.baseCoin || "").toUpperCase();
   const symbol = String(x.symbol || "").toUpperCase();
+
   const isForex =
     /^(EUR|GBP|USD|JPY|AUD|NZD|CAD|CHF){2}$/.test(base);
+
   const isStock =
-    base.endsWith("STOCK") ||
     base.includes("STOCK");
+
   return x.status === "Trading" &&
     x.quoteCoin === "USDT" &&
     x.contractType === "LinearPerpetual" &&
@@ -115,179 +151,238 @@ function isCryptoContract(x) {
     !isForex &&
     !isStock;
 }
+
 async function loadSymbols() {
   let cursor = "";
   const all = [];
+
   do {
     let url = "/v5/market/instruments-info?category=linear&limit=1000";
+
     if (cursor) {
       url += "&cursor=" + encodeURIComponent(cursor);
     }
+
     const result = await getJSON(url);
     all.push(...(result.list || []));
     cursor = result.nextPageCursor || "";
-    $("status").textContent = "Знайдено контрактів: " + all.length;
+
+    $("status").textContent =
+      "Знайдено контрактів: " + all.length;
+
   } while (cursor);
+
   return all.filter(isCryptoContract).map(x => x.symbol);
 }
+
 async function loadPrices() {
   const result = await getJSON("/v5/market/tickers?category=linear");
+
   prices = {};
+
   (result.list || []).forEach(x => {
     if (symbols.includes(x.symbol)) {
       prices[x.symbol] = Number(x.lastPrice);
     }
   });
 }
+
 async function loadOneLevel(symbol,startTime,endTime) {
   const url = "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&start=" + startTime +
     "&end=" + endTime + "&limit=100";
+
   const result = await getJSON(url);
   const candles = result.list || [];
+
   if (!candles.length) return null;
+
   let high = -Infinity;
   let low = Infinity;
+
   candles.forEach(c => {
     high = Math.max(high,Number(c[2]));
     low = Math.min(low,Number(c[3]));
   });
-  if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
+
+  if (!Number.isFinite(high) || !Number.isFinite(low)) {
+    return null;
+  }
+
   return {high,low};
 }
+
 function updateProgress() {
   const percent = symbols.length
     ? Math.round(completed/symbols.length*100) : 0;
+
   $("fill").style.width = percent + "%";
+
   $("progressText").textContent =
-    "Рівнів завантажено: " + completed + " із " + symbols.length +
-    " (" + percent + "%)";
+    "Рівнів завантажено: " + completed +
+    " із " + symbols.length + " (" + percent + "%)";
+
   $("summary").textContent =
     "Криптовалют: " + symbols.length +
     " · Рівнів готово: " + Object.keys(levels).length;
 }
+
 async function worker(queue,startTime,endTime) {
   while (queue.length) {
     const symbol = queue.shift();
+
     try {
       const level = await loadOneLevel(symbol,startTime,endTime);
       if (level) levels[symbol] = level;
     } catch(error) {}
+
     completed++;
     updateProgress();
     await sleep(250);
   }
 }
-/*
-  Шукаємо підтверджені локальні максимуми та мінімуми
-  за останні 24 години на 15-хвилинних свічках.
-  Локальний максимум: high вищий за два попередні
-  та два наступні максимуми.
-  Локальний мінімум: low нижчий за два попередні
-  та два наступні мінімуми.
-*/
+
 async function calculateTradeLevels(symbol,side,entry) {
   const url = "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&limit=100";
+
   const result = await getJSON(url);
+
   const candles = (result.list || [])
     .slice()
     .sort((a,b) => Number(a[0])-Number(b[0]));
-  // Останню свічку не беремо, бо вона ще може формуватися.
+
   const closed = candles.slice(0,-1);
+
   if (closed.length < 10) return null;
+
   const now = Date.now();
+
   const last24h = closed.filter(c =>
     Number(c[0]) >= now - 24*60*60*1000
   );
+
   if (last24h.length < 10) return null;
+
   const highs = [];
   const lows = [];
+
   for (let i=2; i<last24h.length-2; i++) {
     const h = Number(last24h[i][2]);
     const l = Number(last24h[i][3]);
+
     const prevHighs = [
       Number(last24h[i-2][2]),
       Number(last24h[i-1][2])
     ];
+
     const nextHighs = [
       Number(last24h[i+1][2]),
       Number(last24h[i+2][2])
     ];
+
     const prevLows = [
       Number(last24h[i-2][3]),
       Number(last24h[i-1][3])
     ];
+
     const nextLows = [
       Number(last24h[i+1][3]),
       Number(last24h[i+2][3])
     ];
+
     if (prevHighs.every(v => h > v) &&
         nextHighs.every(v => h >= v)) {
       highs.push(h);
     }
+
     if (prevLows.every(v => l < v) &&
         nextLows.every(v => l <= v)) {
       lows.push(l);
     }
   }
+
   let target = 0;
   let tp = 0;
   let sl = 0;
+
   if (side === "LONG") {
-    // Найближчий локальний максимум вище ціни входу.
     const candidates = highs
       .filter(h => h > entry)
       .sort((a,b) => a-b);
+
     if (!candidates.length) return null;
+
     target = candidates[0];
     tp = target * (1 - TP_OFFSET);
+
     if (tp <= entry) return null;
+
     const risk = (tp-entry)/SL_RATIO;
     sl = entry-risk;
+
   } else {
-    // Найближчий локальний мінімум нижче ціни входу.
     const candidates = lows
       .filter(l => l < entry)
       .sort((a,b) => b-a);
+
     if (!candidates.length) return null;
+
     target = candidates[0];
     tp = target * (1 + TP_OFFSET);
+
     if (tp >= entry) return null;
+
     const risk = (entry-tp)/SL_RATIO;
     sl = entry+risk;
   }
-  if (![entry,tp,sl,target].every(Number.isFinite)) return null;
+
+  if (![entry,tp,sl,target].every(Number.isFinite)) {
+    return null;
+  }
+
+  if (entry <= 0 || tp <= 0 || sl <= 0 || target <= 0) {
+    return null;
+  }
+
   return {entry,tp,sl,target};
 }
+
 function render() {
-  const recent = signals.slice(-30).reverse();
+  const recent = signals
+    .filter(validSignal)
+    .slice(-30)
+    .reverse();
+
   $("signals").innerHTML = recent.length
     ? recent.map(s => `
       <div class="card">
         <b class="${s.side==="LONG"?"green":"red"}">
           ${s.side} — ${s.symbol}
         </b><br>
-        Ціна входу: ${s.price}<br>
-        Локальний рівень: ${s.target}<br>
-        <span class="green">Take Profit: ${s.tp}</span><br>
-        <span class="red">Stop Loss: ${s.sl}</span><br>
+        Ціна входу: ${Number(s.price)}<br>
+        Локальний рівень: ${Number(s.target)}<br>
+        <span class="green">Take Profit: ${Number(s.tp)}</span><br>
+        <span class="red">Stop Loss: ${Number(s.sl)}</span><br>
         Потенційний прибуток: ${s.profitPercent}%<br>
         Потенційний ризик: ${s.riskPercent}%<br>
         Співвідношення прибуток/ризик: 3:1<br>
-        <span class="small">${s.time}</span>
+        <span class="small">${s.time || ""}</span>
       </div>
     `).join("")
-    : "<div class='info'>Підтверджених пробоїв поки немає.</div>";
+    : "<div class='info'>Підтверджених сигналів із розрахованими рівнями поки немає.</div>";
+
   const near = symbols
     .filter(s => levels[s] && prices[s] > 0)
     .map(s => {
       const price = prices[s];
       const level = levels[s];
+
       const dh = (level.high-price)/price*100;
       const dl = (price-level.low)/price*100;
+
       return {
         symbol:s,price,level,dh,dl,
         dist:Math.min(Math.abs(dh),Math.abs(dl))
@@ -296,6 +391,7 @@ function render() {
     .filter(x => x.dist <= 1)
     .sort((a,b) => a.dist-b.dist)
     .slice(0,50);
+
   $("coins").innerHTML = near.length
     ? near.map(x => `
       <div class="card">
@@ -307,73 +403,108 @@ function render() {
     `).join("")
     : "<div class='info'>Монет біля рівнів зараз немає.</div>";
 }
+
 async function checkOneSignal(symbol) {
   const url = "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&limit=25";
+
   const result = await getJSON(url);
+
   const candles = (result.list || [])
     .slice()
     .sort((a,b) => Number(a[0])-Number(b[0]));
+
   if (candles.length < 22) return;
+
   const closedIndex = candles.length-2;
   const previous = candles[closedIndex-1];
   const candle = candles[closedIndex];
   const level = levels[symbol];
+
   if (!level) return;
+
   const open = Number(candle[1]);
   const high = Number(candle[2]);
   const low = Number(candle[3]);
   const close = Number(candle[4]);
   const volume = Number(candle[5]);
   const previousClose = Number(previous[4]);
+
   const range = high-low;
+
   if (range <= 0 || volume <= 0) return;
+
   const body = Math.abs(close-open);
   const bodyRatio = body/range;
+
+  if (bodyRatio < 0.5) return;
+
   const older = candles.slice(
     Math.max(0,closedIndex-20),
     closedIndex
   );
+
   if (older.length < 15) return;
+
   const averageVolume =
     older.reduce((sum,c) => sum+Number(c[5]),0)/older.length;
+
   if (averageVolume <= 0) return;
   if (volume < averageVolume*1.2) return;
-  if (bodyRatio < 0.5) return;
+
   let side = "";
   let breakoutLevel = 0;
+
   if (previousClose <= level.high &&
       close > level.high*1.001 &&
       close > open) {
     side = "LONG";
     breakoutLevel = level.high;
   }
+
   if (previousClose >= level.low &&
       close < level.low*0.999 &&
       close < open) {
     side = "SHORT";
     breakoutLevel = level.low;
   }
+
   if (!side) return;
-  const key = todayKey()+"_"+symbol+"_"+side+"_"+candle[0];
+
+  const key =
+    todayKey()+"_"+symbol+"_"+side+"_"+candle[0];
+
   if (signals.some(s => s.key === key)) return;
-  // Розраховуємо TP і SL за локальними рівнями.
+
   let trade = null;
+
   try {
     trade = await calculateTradeLevels(symbol,side,close);
   } catch(error) {
     return;
   }
-  // Якщо немає відповідного локального рівня, сигнал пропускаємо.
-  if (!trade) return;
+
+  if (!trade || !validSignal({
+    symbol,
+    side,
+    price:trade.entry,
+    target:trade.target,
+    tp:trade.tp,
+    sl:trade.sl
+  })) {
+    return;
+  }
+
   const profitPercent = (
     Math.abs(trade.tp-trade.entry)/trade.entry*100
   ).toFixed(2);
+
   const riskPercent = (
     Math.abs(trade.entry-trade.sl)/trade.entry*100
   ).toFixed(2);
-  signals.push({
+
+  const signal = {
     key,
     symbol,
     side,
@@ -387,89 +518,140 @@ async function checkOneSignal(symbol) {
     time:new Date(Number(candle[0])).toLocaleString("uk-UA",{
       timeZone:"Europe/Prague"
     })
-  });
-  signals = signals.slice(-200);
+  };
+
+  if (!validSignal(signal)) return;
+
+  signals.push(signal);
+  signals = signals.filter(validSignal).slice(-200);
+
   localStorage.setItem(
-    "bybitSignals_v2",
+    STORAGE_KEY,
     JSON.stringify(signals)
   );
 }
+
 async function checkSignals() {
   if (busy) return;
+
   busy = true;
+
   try {
     await loadPrices();
+
     const candidates = symbols.filter(s => levels[s]);
+
     for (let i=0;i<candidates.length;i+=5) {
       const batch = candidates.slice(i,i+5);
+
       await Promise.all(batch.map(async symbol => {
         try {
           await checkOneSignal(symbol);
         } catch(error) {}
       }));
+
       await sleep(200);
     }
+
     render();
+
     $("status").textContent =
       "Сканування активне · Оновлено: " +
       new Date().toLocaleTimeString("uk-UA",{
         timeZone:"Europe/Prague"
       });
+
   } catch(error) {
-    $("status").textContent = "Помилка оновлення: " + error.message;
+    $("status").textContent =
+      "Помилка оновлення: " + error.message;
+
   } finally {
     busy = false;
   }
 }
+
 async function start() {
   try {
-    signals = JSON.parse(
-      localStorage.getItem("bybitSignals_v2") || "[]"
-    );
+    // Завантажуємо тільки сигнали з правильними числовими рівнями.
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem(STORAGE_KEY) || "[]"
+      );
+
+      signals = Array.isArray(saved)
+        ? saved.filter(validSignal)
+        : [];
+
+    } catch(error) {
+      signals = [];
+    }
+
     $("status").textContent = "Завантаження криптовалют...";
+
     symbols = await loadSymbols();
+
     $("summary").textContent =
       "Знайдено контрактів: " + symbols.length;
+
     await loadPrices();
     render();
+
     const today = todayKey();
+
     const yesterday = new Date(
       pragueMidnight(today)-86400000
     );
+
     const yesterdayText = new Intl.DateTimeFormat("en-CA",{
       timeZone:"Europe/Prague",
       year:"numeric",month:"2-digit",day:"2-digit"
     }).format(yesterday);
+
     const startTime = pragueMidnight(yesterdayText);
     const endTime = pragueMidnight(today)-1;
+
     completed = 0;
-    $("status").textContent = "Завантажую вчорашні рівні...";
+
+    $("status").textContent =
+      "Завантажую вчорашні рівні...";
+
     const queue = symbols.slice();
+
     await Promise.all([
       worker(queue,startTime,endTime),
       worker(queue,startTime,endTime),
       worker(queue,startTime,endTime)
     ]);
+
     updateProgress();
     render();
+
     $("status").textContent =
       "Усі рівні завантажені. Сканування активне.";
+
     await checkSignals();
+
     setInterval(checkSignals,60000);
+
     setInterval(async () => {
       try {
         await loadPrices();
         render();
       } catch(error) {
-        $("status").textContent = "Помилка цін: " + error.message;
+        $("status").textContent =
+          "Помилка цін: " + error.message;
       }
     },30000);
+
   } catch(error) {
-    $("status").textContent = "Помилка: " + error.message;
+    $("status").textContent =
+      "Помилка: " + error.message;
+
     $("progressText").textContent =
       "Не вдалося завершити завантаження.";
   }
 }
+
 start();
 </script>
 </body>
