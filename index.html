@@ -2,508 +2,401 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Прихований розворот PRO</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ПРИХОВАНИЙ РОЗВОРОТ PRO</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#0b1020;color:#edf3ff;font:15px Arial,sans-serif}
-.wrap{max-width:1100px;margin:auto;padding:20px}
-h1{font-size:28px}
-.panel{background:#131b2e;border:1px solid #26334b;border-radius:14px;padding:16px;margin:15px 0}
+body{margin:0;background:#080e18;color:#e8efff;font-family:Arial,sans-serif;padding:16px}
+.wrap{max-width:1100px;margin:auto}
+h1{font-size:25px;color:#55d6a5;margin-bottom:5px}
+.sub{color:#91a4c5;font-size:13px;margin-bottom:18px}
+.card{background:#111d30;border:1px solid #263b59;border-radius:12px;padding:15px;margin-bottom:13px}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.stat{background:#0f1728;padding:12px;border-radius:10px}
-small{color:#9aa9c2}
-strong{display:block;font-size:20px;margin-top:5px}
-button,input,select{padding:10px;border-radius:8px;border:1px solid #34435d;background:#0c1425;color:white}
-button{cursor:pointer;background:#214b81}
-button:disabled{opacity:.5}
-.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
-.field{display:flex;flex-direction:column;gap:5px}
-.signals{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.signal{background:#10192b;border:1px solid #26334b;border-radius:12px;padding:14px}
-.long{border-left:4px solid #31d69a}
-.short{border-left:4px solid #ff7185}
-.long .direction{color:#31d69a}
-.short .direction{color:#ff7185}
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:12px 0}
-.metric{background:#0b1424;padding:8px;border-radius:8px}
-.metric small{display:block}
-.good{color:#31d69a}.bad{color:#ff7185}
-.note{color:#9aa9c2;font-size:13px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-td,th{text-align:left;padding:8px;border-bottom:1px solid #26334b}
-.tablewrap{overflow:auto}
-.empty{padding:20px;text-align:center;color:#9aa9c2}
-@media(max-width:700px){
-.grid{grid-template-columns:repeat(2,1fr)}
-.signals{grid-template-columns:1fr}
-.metrics{grid-template-columns:repeat(2,1fr)}
-}
+.stat{font-size:12px;color:#9aacc9}
+.stat b{display:block;color:#fff;font-size:23px;margin-top:7px}
+label{font-size:12px;color:#a9bad5;display:block;margin-bottom:5px}
+input{width:100%;background:#091321;color:white;border:1px solid #354c6b;border-radius:7px;padding:10px;font-size:16px}
+button{border:0;border-radius:8px;padding:12px 16px;font-weight:bold;cursor:pointer;margin:4px}
+.start{background:#20bd86;color:#04150f}
+.stop{background:#d94b5c;color:white}
+.secondary{background:#263c5b;color:white}
+.green{color:#39dda0}
+.red{color:#ff6877}
+.muted{color:#91a4c5}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:10px 6px;border-bottom:1px solid #263b59}
+th{color:#9aacc9}
+.badge{padding:4px 7px;border-radius:5px;background:#243b58}
+.long{color:#3ee0a1}.short{color:#ff6a7a}
+.status{font-size:13px;color:#9db3d5}
+#signals,#trades{overflow-x:auto}
+@media(max-width:650px){.grid{grid-template-columns:repeat(2,1fr)}h1{font-size:21px}table{min-width:580px}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
 <h1>ПРИХОВАНИЙ РОЗВОРОТ PRO</h1>
-<p class="note">Bybit · USDT Perpetual · H1 / M15 / M5 · Сигнали LONG і SHORT</p>
+<div class="sub">BYBIT · USDT PERPETUAL · H1 / M15 / M5 · LONG / SHORT</div>
 
-<section class="panel">
-<div class="grid">
-<div class="stat"><small>USDT-пари</small><strong id="pairsCount">—</strong></div>
-<div class="stat"><small>Моніторяться</small><strong id="watchCount">—</strong></div>
-<div class="stat"><small>Сигнали</small><strong id="signalsCount">0</strong></div>
-<div class="stat"><small>Угоди / збитки</small><strong id="tradesCount">0 / 0</strong></div>
+<div class="card">
+ <div class="grid">
+  <div class="stat">USDT-пари<b id="pairs">0</b></div>
+  <div class="stat">Сигнали<b id="signalCount">0</b></div>
+  <div class="stat">Відкриті угоди<b id="openCount">0</b></div>
+  <div class="stat">Закриті угоди<b id="closedCount">0</b></div>
+ </div>
 </div>
-<p id="connection" class="note">Не запущено</p>
-<p id="status" class="note">Натисни «Запустити сканер».</p>
-</section>
 
-<section class="panel">
-<h2>Налаштування</h2>
-<div class="controls">
-<div class="field">
-<label>Депозит USDT</label>
-<input id="deposit" type="number" value="1000" min="1">
+<div class="card">
+ <h3>Налаштування ризику</h3>
+ <div class="grid">
+  <div><label>Віртуальний депозит ($)</label><input id="deposit" type="number" value="1000"></div>
+  <div><label>Ризик на угоду (%)</label><input id="risk" type="number" value="0.5" step="0.1"></div>
+  <div><label>Максимум угод на день</label><input id="maxTrades" type="number" value="3"></div>
+  <div><label>Інтервал сканування (хв)</label><input id="interval" type="number" value="5"></div>
+ </div>
+ <p class="muted">Ризик обмежений 0,5%. Дві збиткові угоди поспіль зупиняють торгівлю до наступного дня.</p>
 </div>
-<div class="field">
-<label>Ризик %</label>
-<input id="risk" type="number" value="0.5" min="0.1" max="0.5" step="0.1">
-</div>
-<div class="field">
-<label>Відстань до рівня %</label>
-<input id="near" type="number" value="0.8" min="0.1" max="3" step="0.1">
-</div>
-<div class="field">
-<label>Фільтр H1</label>
-<select id="trend">
-<option value="strict">EMA 50/200 обов'язковий</option>
-<option value="info">Лише показувати напрямок</option>
-</select>
-</div>
-<button id="startBtn">Запустити сканер</button>
-<button id="stopBtn" disabled>Зупинити</button>
-<button id="newsBtn">Пауза новин ВИМК.</button>
-</div>
-<p class="note">Скануються активні USDT Perpetual, включно з BTCUSDT.</p>
-</section>
 
-<section class="panel">
-<h2>Торгові сигнали</h2>
-<div id="signals" class="signals">
-<div class="empty">Очікування запуску…</div>
+<div class="card">
+ <button class="start" id="startBtn">▶ ЗАПУСТИТИ СКАНЕР</button>
+ <button class="stop" id="stopBtn">■ ЗУПИНИТИ</button>
+ <button class="secondary" id="resetBtn">СКИНУТИ ЖУРНАЛ</button>
+ <p class="status" id="status">● Не запущено</p>
+ <p class="muted" id="updated">Очікування запуску</p>
 </div>
-</section>
 
-<section class="panel">
-<h2>Рівні</h2>
-<div class="tablewrap">
-<table>
-<thead>
-<tr>
-<th>Пара</th><th>Ціна</th><th>ВД</th><th>НД</th><th>Макс M15</th><th>Мін M15</th><th>H1</th>
-</tr>
-</thead>
-<tbody id="levels">
-<tr><td colspan="7">Очікування даних</td></tr>
-</tbody>
-</table>
+<div class="card">
+ <h3>Результати сканування</h3>
+ <div id="signals" class="muted">Поки немає сигналів.</div>
 </div>
-</section>
 
-<section class="panel">
-<h2>Контроль ризику</h2>
-<div class="grid">
-<div class="stat"><small>Ліміт угод</small><strong>3 на день</strong></div>
-<div class="stat"><small>Зупинка</small><strong>2 збитки поспіль</strong></div>
-<div class="stat"><small>Ризик зараз</small><strong id="riskAmount">5 USDT</strong></div>
-<div class="stat"><small>Стан</small><strong id="riskState">Дозволено</strong></div>
+<div class="card">
+ <h3>Віртуальні угоди</h3>
+ <div id="trades" class="muted">Угод ще немає.</div>
 </div>
-</section>
 
-<p class="note">Інформаційний інструмент. Не відкриває угоди автоматично, не має доступу до твого балансу та не гарантує прибуток. Перед реальною торгівлею потрібне тестування.</p>
+<div class="card">
+ <h3>Контроль ризику</h3>
+ <div id="riskStatus">Денний ліміт: 0 угод. Збитків поспіль: 0.</div>
+ <p class="muted">Угоди віртуальні. Результати зберігаються в браузері цього пристрою.</p>
+</div>
+
 </div>
 
 <script>
-'use strict';
-
-const API='https://api.bybit.com';
+const API="https://api.bybit.com";
 const $=id=>document.getElementById(id);
 
-const state={
- running:false,
- paused:false,
- symbols:[],
- data:new Map(),
- signals:[],
- busy:new Set(),
- timer:null,
- trades:0,
- losses:0,
- streak:0,
- recorded:new Set()
-};
+let running=false;
+let timer=null;
+let busy=false;
+let symbols=[];
+let signals=[];
+let trades=JSON.parse(localStorage.getItem("paperTrades")||"[]");
+let history=JSON.parse(localStorage.getItem("paperHistory")||"[]");
+let dayKey=new Date().toISOString().slice(0,10);
+let dailyTrades=0;
+let losses=0;
+let seen={};
 
-function fmt(n,d=8){
- return Number.isFinite(+n)
- ? (+n).toLocaleString('en-US',{maximumFractionDigits:d})
- : '—';
-}
-
-function log(s){
- $('status').textContent=s;
-}
-
-function updateRisk(){
- const deposit=+$('deposit').value;
- const risk=+$('risk').value;
- $('riskAmount').textContent=fmt(deposit*risk/100,2)+' USDT';
- $('tradesCount').textContent=state.trades+' / '+state.losses;
- const locked=state.trades>=3||state.streak>=2;
- $('riskState').textContent=locked?'ЗАБЛОКОВАНО':'Дозволено';
- $('riskState').className=locked?'bad':'good';
-}
-
-async function api(path,params={}){
- const url=new URL(API+path);
- Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));
- const response=await fetch(url);
- if(!response.ok)throw Error('HTTP '+response.status);
- const json=await response.json();
- if(json.retCode!==0)throw Error(json.retMsg);
- return json.result;
-}
-
-async function getSymbols(){
- let cursor='';
- let result=[];
- for(let i=0;i<10;i++){
-  const r=await api('/v5/market/instruments-info',{
-   category:'linear',limit:1000,cursor
-  });
-  result.push(...r.list);
-  if(!r.nextPageCursor)break;
-  cursor=r.nextPageCursor;
- }
- return result
- .filter(x=>x.status==='Trading'&&x.quoteCoin==='USDT'&&x.contractType==='LinearPerpetual')
- .map(x=>x.symbol);
-}
-
-async function candles(symbol,interval,limit=100){
- const r=await api('/v5/market/kline',{
-  category:'linear',symbol,interval,limit
- });
- return r.list.map(x=>({
-  time:+x[0],
-  open:+x[1],
-  high:+x[2],
-  low:+x[3],
-  close:+x[4]
- })).sort((a,b)=>a.time-b.time);
+function save(){
+ localStorage.setItem("paperTrades",JSON.stringify(trades));
+ localStorage.setItem("paperHistory",JSON.stringify(history));
 }
 
 function ema(values,period){
- if(values.length<period)return NaN;
- const k=2/(period+1);
- let result=values.slice(0,period).reduce((a,b)=>a+b,0)/period;
- for(let i=period;i<values.length;i++){
-  result=values[i]*k+result*(1-k);
- }
- return result;
+ let k=2/(period+1),v=values[0];
+ for(let i=1;i<values.length;i++)v=values[i]*k+v*(1-k);
+ return v;
 }
 
-function pivots(bars){
- const highs=[],lows=[];
- for(let i=2;i<bars.length-2;i++){
-  const c=bars[i];
-  if(bars[i-1].high<c.high&&bars[i-2].high<c.high&&bars[i+1].high<c.high&&bars[i+2].high<c.high)
-   highs.push(c.high);
-  if(bars[i-1].low>c.low&&bars[i-2].low>c.low&&bars[i+1].low>c.low&&bars[i+2].low>c.low)
-   lows.push(c.low);
- }
- return {highs,lows};
+async function api(path){
+ let r=await fetch(API+path);
+ if(!r.ok)throw Error("Bybit HTTP "+r.status);
+ let j=await r.json();
+ if(j.retCode!==0)throw Error(j.retMsg||"Помилка Bybit");
+ return j.result;
 }
 
-function biasH1(bars){
- const closes=bars.map(x=>x.close);
- const e50=ema(closes,50);
- const e200=ema(closes,200);
- if(!Number.isFinite(e50)||!Number.isFinite(e200))return 'Н/Д';
- return e50>e200?'LONG':e50<e200?'SHORT':'FLAT';
+async function loadSymbols(){
+ let result=await api("/v5/market/instruments-info?category=linear&limit=1000&settleCoin=USDT");
+ return result.list
+  .filter(x=>x.status==="Trading"&&x.contractType==="LinearPerpetual"&&x.symbol.endsWith("USDT"))
+  .map(x=>x.symbol);
 }
 
-async function getDaily(symbol){
- const b=await candles(symbol,'D',3);
- if(b.length<2)return null;
- return {high:b[b.length-2].high,low:b[b.length-2].low};
+async function tickerMap(){
+ let r=await api("/v5/market/tickers?category=linear");
+ return Object.fromEntries(r.list.map(x=>[x.symbol,x]));
 }
 
-async function getDetails(symbol){
- const [m15,h1,m5]=await Promise.all([
-  candles(symbol,'15',100),
-  candles(symbol,'60',220),
-  candles(symbol,'5',100)
- ]);
- const p=pivots(m15);
- return {
-  m15,m5,
-  max:p.highs.at(-1),
-  min:p.lows.at(-1),
-  bias:biasH1(h1)
- };
+async function candles(symbol,interval,limit=100){
+ let r=await api("/v5/market/kline?category=linear&symbol="+symbol+"&interval="+interval+"&limit="+limit);
+ return r.list.map(x=>({
+  time:+x[0],open:+x[1],high:+x[2],low:+x[3],close:+x[4]
+ })).reverse();
 }
 
-function near(price,level,pct){
- return Number.isFinite(level)&&level>0&&Math.abs(price-level)/level*100<=pct;
-}
+function findSetup(c){
+ if(c.length<40)return null;
 
-function sweep(bars,level,side){
- for(let i=Math.max(0,bars.length-30);i<bars.length-1;i++){
-  const c=bars[i];
-  if(side==='LONG'&&c.low<level&&c.close>level){
-   const previous=bars.slice(Math.max(0,i-10),i);
-   return {
-    index:i,
-    extreme:c.low,
-    bos:Math.max(...previous.map(x=>x.high))
-   };
+ // Використовуємо лише закриті свічки.
+ let a=c.slice(0,-1);
+ let n=a.length;
+ let start=Math.max(15,n-18);
+
+ for(let i=n-7;i>=start;i--){
+  let prev=a.slice(Math.max(0,i-12),i);
+  if(prev.length<8)continue;
+
+  let support=Math.min(...prev.map(x=>x.low));
+  let resistance=Math.max(...prev.map(x=>x.high));
+  let sweep=a[i];
+
+  // LONG: прокол локального мінімуму та повернення вище.
+  if(sweep.low<support&&sweep.close>support){
+   let bos=-1;
+   for(let j=i+1;j<=Math.min(i+4,n-2);j++){
+    let prior=a.slice(Math.max(0,j-5),j);
+    if(prior.length&&a[j].close>Math.max(...prior.map(x=>x.high))){
+     bos=j;break;
+    }
+   }
+   if(bos>0){
+    let level=a[bos-1].high;
+    for(let j=bos+1;j<n;j++){
+     if(a[j].low<=level*1.002&&a[j].close>level){
+      return {
+       side:"LONG",entry:a[j].close,
+       sl:sweep.low*0.999,
+       time:a[j].time,
+       reason:"Sweep → BOS → Retest"
+      };
+     }
+    }
+   }
   }
-  if(side==='SHORT'&&c.high>level&&c.close<level){
-   const previous=bars.slice(Math.max(0,i-10),i);
-   return {
-    index:i,
-    extreme:c.high,
-    bos:Math.min(...previous.map(x=>x.low))
-   };
+
+  // SHORT: прокол локального максимуму та повернення нижче.
+  if(sweep.high>resistance&&sweep.close<resistance){
+   let bos=-1;
+   for(let j=i+1;j<=Math.min(i+4,n-2);j++){
+    let prior=a.slice(Math.max(0,j-5),j);
+    if(prior.length&&a[j].close<Math.min(...prior.map(x=>x.low))){
+     bos=j;break;
+    }
+   }
+   if(bos>0){
+    let level=a[bos-1].low;
+    for(let j=bos+1;j<n;j++){
+     if(a[j].high>=level*0.998&&a[j].close<level){
+      return {
+       side:"SHORT",entry:a[j].close,
+       sl:sweep.high*1.001,
+       time:a[j].time,
+       reason:"Sweep → BOS → Retest"
+      };
+     }
+    }
+   }
   }
  }
  return null;
 }
 
-function makeSignal(symbol,side,level,levelName,setup,bars,bias){
- let bosIndex=-1;
- for(let i=setup.index+1;i<bars.length;i++){
-  if(side==='LONG'?bars[i].close>setup.bos:bars[i].close<setup.bos){
-   bosIndex=i;
-   break;
+function resetDay(){
+ let d=new Date().toISOString().slice(0,10);
+ if(d!==dayKey){
+  dayKey=d;dailyTrades=0;losses=0;
+ }
+}
+
+function openPaper(symbol,s){
+ resetDay();
+ if(dailyTrades>=Math.max(1,+$("maxTrades").value||3))return;
+ if(losses>=2)return;
+ if(trades.some(t=>t.symbol===symbol&&t.status==="OPEN"))return;
+
+ let risk=Math.min(0.5,Math.max(0.1,+$("risk").value||0.5));
+ let deposit=Math.max(1,+$("deposit").value||1000);
+ let distance=Math.abs(s.entry-s.sl);
+ if(!distance||distance/s.entry>0.025)return;
+
+ let amount=deposit*risk/100;
+ let qty=amount/distance;
+ let direction=s.side==="LONG"?1:-1;
+ let id=symbol+"-"+s.time+"-"+s.side;
+
+ if(seen[id])return;
+ seen[id]=true;
+
+ trades.unshift({
+  id,symbol,side:s.side,entry:s.entry,sl:s.sl,
+  qty,initialQty:qty,
+  tp1:s.entry+direction*distance,
+  tp2:s.entry+direction*distance*2,
+  tp3:s.entry+direction*distance*3,
+  r:distance,realized:0,
+  status:"OPEN",opened:Date.now(),
+  hit1:false,hit2:false
+ });
+ dailyTrades++;
+ save();
+ render();
+}
+
+function closePart(t,price,fraction){
+ let q=t.initialQty*fraction;
+ let direction=t.side==="LONG"?1:-1;
+ t.realized+=(price-t.entry)*direction*q;
+ t.qty=Math.max(0,t.qty-q);
+}
+
+function updateTrades(prices){
+ for(let t of trades){
+  if(t.status!=="OPEN")continue;
+  let p=prices[t.symbol];
+  if(!p)continue;
+
+  if(t.side==="LONG"){
+   if(p<=t.sl){finish(t,t.sl);continue;}
+   if(!t.hit1&&p>=t.tp1){closePart(t,t.tp1,1/3);t.hit1=true;}
+   if(!t.hit2&&p>=t.tp2){closePart(t,t.tp2,1/3);t.hit2=true;}
+   if(p>=t.tp3){closePart(t,t.tp3,1);finish(t,t.tp3);continue;}
+  }else{
+   if(p>=t.sl){finish(t,t.sl);continue;}
+   if(!t.hit1&&p<=t.tp1){closePart(t,t.tp1,1/3);t.hit1=true;}
+   if(!t.hit2&&p<=t.tp2){closePart(t,t.tp2,1/3);t.hit2=true;}
+   if(p<=t.tp3){closePart(t,t.tp3,1);finish(t,t.tp3);continue;}
   }
  }
- if(bosIndex<0)return null;
-
- let retest=null;
- for(let i=bosIndex+1;i<bars.length;i++){
-  const c=bars[i];
-  const tolerance=setup.bos*0.0015;
-  if(side==='LONG'&&c.low<=setup.bos+tolerance&&c.close>setup.bos&&c.close>c.open)retest=c;
-  if(side==='SHORT'&&c.high>=setup.bos-tolerance&&c.close<setup.bos&&c.close<c.open)retest=c;
- }
- if(!retest)return null;
-
- if($('trend').value==='strict'){
-  if(side==='LONG'&&bias!=='LONG')return null;
-  if(side==='SHORT'&&bias!=='SHORT')return null;
- }
- const entry=retest.close;
- const stop=side==='LONG'?setup.extreme-entry*0.0005:setup.extreme+entry*0.0005;
- const risk=Math.abs(entry-stop);
- if(!risk)return null;
-
- const sign=side==='LONG'?1:-1;
- const cash=+$('deposit').value*+$('risk').value/100;
- const qty=cash/risk;
-
- return {
-  id:symbol+side+Math.round(level*100000)+Math.floor(Date.now()/60000),
-  symbol,side,level,levelName,entry,stop,
-  tp1:entry+sign*risk,
-  tp2:entry+sign*risk*2,
-  tp3:entry+sign*risk*3,
-  qty,cash,bias,time:Date.now()
- };
+ save();
 }
 
-function addSignal(s){
- if(!s)return;
- if(state.signals.some(x=>x.symbol===s.symbol&&x.side===s.side&&Date.now()-x.time<45*60000))return;
- state.signals.unshift(s);
- state.signals=state.signals.slice(0,40);
- $('signalsCount').textContent=state.signals.length;
- renderSignals();
- log('Новий сигнал '+s.side+' '+s.symbol);
+function finish(t,price){
+ if(t.qty>0)closePart(t,price,t.qty/t.initialQty);
+ t.status="CLOSED";
+ t.closed=Date.now();
+ history.unshift({...t});
+ if(t.realized<0)losses++;
+ else losses=0;
 }
 
-function renderSignals(){
- const root=$('signals');
- if(!state.signals.length){
-  root.innerHTML='<div class="empty">Підтверджених сигналів поки немає.</div>';
-  return;
- }
- root.innerHTML=state.signals.map(s=>`
- <article class="signal ${s.side.toLowerCase()}">
- <div><b>${s.symbol}</b> <span class="direction">${s.side}</span></div>
- <p class="note">Рівень: ${s.levelName} · H1: ${s.bias}</p>
- <div class="metrics">
- <div class="metric"><small>Вхід</small><b>${fmt(s.entry)}</b></div>
- <div class="metric"><small>Stop Loss</small><b class="bad">${fmt(s.stop)}</b></div>
- <div class="metric"><small>Рівень</small><b>${fmt(s.level)}</b></div>
- <div class="metric"><small>TP 1R</small><b class="good">${fmt(s.tp1)}</b></div>
- <div class="metric"><small>TP 2R</small><b class="good">${fmt(s.tp2)}</b></div>
- <div class="metric"><small>TP 3R</small><b class="good">${fmt(s.tp3)}</b></div>
- </div>
- <p class="note">Ризик ${fmt(s.cash,2)} USDT · Кількість ${fmt(s.qty,5)}</p>
- <button onclick="record('${s.id}','win')">Прибуток</button>
- <button onclick="record('${s.id}','loss')">Збиток</button>
- </article>`).join('');
+function render(){
+ $("pairs").textContent=symbols.length;
+ $("signalCount").textContent=signals.length;
+ $("openCount").textContent=trades.filter(t=>t.status==="OPEN").length;
+ $("closedCount").textContent=history.length;
+
+ $("signals").innerHTML=signals.length?
+ `<table><thead><tr><th>Пара</th><th>Напрямок</th><th>Вхід</th><th>SL</th><th>Причина</th></tr></thead><tbody>`+
+ signals.map(s=>`<tr><td>${s.symbol}</td><td class="${s.side.toLowerCase()}">${s.side}</td><td>${fmt(s.entry)}</td><td>${fmt(s.sl)}</td><td>${s.reason}</td></tr>`).join("")+
+ `</tbody></table>`:"Сигналів поки немає.";
+
+ let all=trades.slice(0,30);
+ $("trades").innerHTML=all.length?
+ `<table><thead><tr><th>Пара</th><th>Напрямок</th><th>Вхід</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th><th>Статус</th><th>P/L $</th></tr></thead><tbody>`+
+ all.map(t=>`<tr><td>${t.symbol}</td><td class="${t.side.toLowerCase()}">${t.side}</td><td>${fmt(t.entry)}</td><td>${fmt(t.sl)}</td><td>${fmt(t.tp1)}</td><td>${fmt(t.tp2)}</td><td>${fmt(t.tp3)}</td><td>${t.status}</td><td>${t.realized.toFixed(2)}</td></tr>`).join("")+
+ `</tbody></table>`:"Угод ще немає.";
+
+ $("riskStatus").textContent=
+ `Угод сьогодні: ${dailyTrades}. Збитків поспіль: ${losses}. `+
+ (losses>=2?"Торгівлю зупинено після двох збитків.":"Ліміт активний.");
 }
 
-window.record=(id,result)=>{
- if(state.recorded.has(id))return;
- if(state.trades>=3||state.streak>=2){
-  alert('Денний ліміт досягнуто');
-  return;
- }
- state.recorded.add(id);
- state.trades++;
- if(result==='loss'){
-  state.losses++;
-  state.streak++;
- }else state.streak=0;
- updateRisk();
-};
+function fmt(n){
+ return Number(n).toLocaleString("en-US",{maximumFractionDigits:6});
+}
 
-async function scan(symbol,ticker){
- if(state.busy.has(symbol)||!state.running||state.paused)return;
- const price=+ticker.lastPrice;
- const d=state.data.get(symbol);
- if(!d||!d.daily)return;
-
- const levels=[];
- if(near(price,d.daily.low,+$('near').value))
-  levels.push({side:'LONG',price:d.daily.low,name:'НД'});
- if(near(price,d.daily.high,+$('near').value))
-  levels.push({side:'SHORT',price:d.daily.high,name:'ВД'});
- if(d.max&&near(price,d.max,0.5))
-  levels.push({side:'SHORT',price:d.max,name:'МАКС M15'});
- if(d.min&&near(price,d.min,0.5))
-  levels.push({side:'LONG',price:d.min,name:'МІН M15'});
-
- if(!levels.length)return;
- state.busy.add(symbol);
-
+async function scan(){
+ if(busy||!running)return;
+ busy=true;
+ $("status").textContent="● Сканування ринку...";
  try{
-  const details=await getDetails(symbol);
-  d.max=details.max;
-  d.min=details.min;
-  d.bias=details.bias;
-  d.m15=details.m15;
+  resetDay();
+  if(!symbols.length)symbols=await loadSymbols();
 
-  for(const lv of levels){
-   const setup=sweep(details.m5,lv.price,lv.side);
-   if(!setup)continue;
-   const signal=makeSignal(
-    symbol,lv.side,lv.price,lv.name,
-    setup,details.m5,details.bias
-   );
-   addSignal(signal);
+  let tickers=await tickerMap();
+  let ranked=symbols
+   .filter(s=>tickers[s])
+   .sort((a,b)=>Number(tickers[b].turnover24h)-Number(tickers[a].turnover24h))
+   .slice(0,25);
+
+  let found=[];
+  let prices={};
+
+  // Обмежуємо паралельні запити, щоб не перевантажувати API.
+  for(let i=0;i<ranked.length;i+=4){
+   let batch=ranked.slice(i,i+4);
+   let results=await Promise.all(batch.map(async symbol=>{
+    try{
+     let [m5,d1]=await Promise.all([
+      candles(symbol,"5",100),
+      candles(symbol,"D",3)
+     ]);
+     let price=Number(tickers[symbol].lastPrice);
+     prices[symbol]=price;
+
+     let setup=findSetup(m5);
+     if(!setup)return null;
+
+     // Рівень попереднього дня — додаткова перевірка близькості.
+     if(d1.length>=2){
+      let prev=d1[d1.length-2];
+      let nearLevel=
+       Math.abs(setup.entry-prev.low)/setup.entry<0.01||
+       Math.abs(setup.entry-prev.high)/setup.entry<0.01;
+      if(!nearLevel)return null;
+     }
+
+     return {symbol,...setup};
+    }catch(e){return null;}
+   }));
+   found.push(...results.filter(Boolean));
   }
-  state.data.set(symbol,d);
+
+  signals=found;
+  for(let s of signals)openPaper(s.symbol,s);
+
+  updateTrades(prices);
+  $("updated").textContent="Оновлено: "+new Date().toLocaleTimeString();
+  $("status").textContent="● Сканер працює";
  }catch(e){
-  console.log(symbol,e.message);
+  $("status").textContent="Помилка: "+e.message;
  }finally{
-  state.busy.delete(symbol);
+  busy=false;
+  render();
  }
 }
 
-async function poll(){
- if(!state.running)return;
- try{
-  const r=await api('/v5/market/tickers',{category:'linear'});
-  const list=r.list.filter(x=>x.symbol.endsWith('USDT'));
-  for(const ticker of list){
-   const d=state.data.get(ticker.symbol);
-   if(d){
-    d.ticker=ticker;
-    scan(ticker.symbol,ticker);
-   }
-  }
-  renderLevels();
-  $('connection').textContent='Працює · '+new Date().toLocaleTimeString('uk-UA');
- }catch(e){
-  $('connection').textContent='Помилка з’єднання';
-  log(e.message);
- }
-}
-
-function renderLevels(){
- const rows=[...state.data.entries()]
- .filter(([s,d])=>d.ticker&&d.daily)
- .slice(0,80);
- $('levels').innerHTML=rows.map(([s,d])=>`
- <tr>
- <td>${s}</td>
- <td>${fmt(d.ticker.lastPrice)}</td>
- <td>${fmt(d.daily.high)}</td>
- <td>${fmt(d.daily.low)}</td>
- <td>${fmt(d.max)}</td>
- <td>${fmt(d.min)}</td>
- <td>${d.bias||'—'}</td>
- </tr>`).join('');
-}
-
-async function start(){
- if(state.running)return;
- state.running=true;
- $('startBtn').disabled=true;
- $('stopBtn').disabled=false;
- try{
-  log('Отримую список пар Bybit…');
-  state.symbols=await getSymbols();
-  $('pairsCount').textContent=state.symbols.length;
-  $('watchCount').textContent=state.symbols.length;
-
-  log('Завантажую попередньоденні рівні…');
-  let done=0;
-  for(const symbol of state.symbols){
-   if(!state.running)return;
-   try{
-    const daily=await getDaily(symbol);
-    if(daily)state.data.set(symbol,{daily});
-   }catch(e){}
-   done++;
-   if(done%10===0)log('Завантажено '+done+' / '+state.symbols.length);
-   await new Promise(r=>setTimeout(r,100));
-  }
-  log('Сканер працює. Очікую Sweep → BOS → Retest.');
-  await poll();
-  state.timer=setInterval(poll,5000);
- }catch(e){
-  log('Помилка запуску: '+e.message);
-  stop();
- }
+function start(){
+ if(running)return;
+ running=true;
+ $("status").textContent="● Запуск...";
+ scan();
+ let mins=Math.max(1,Math.min(30,+$("interval").value||5));
+ timer=setInterval(scan,mins*60000);
 }
 
 function stop(){
- state.running=false;
- clearInterval(state.timer);
- $('startBtn').disabled=false;
- $('stopBtn').disabled=true;
- $('connection').textContent='Зупинено';
+ running=false;
+ clearInterval(timer);
+ $("status").textContent="● Зупинено";
 }
 
-$('startBtn').addEventListener('click',start);
-$('stopBtn').addEventListener('click',stop);
-$('newsBtn').addEventListener('click',()=>{
- state.paused=!state.paused;
- $('newsBtn').textContent=state.paused?'Пауза новин УВІМК.':'Пауза новин ВИМК.';
- log(state.paused?'Сканування сигналів призупинено.':'Сканування відновлено.');
-});
-$('deposit').addEventListener('input',updateRisk);
-$('risk').addEventListener('input',()=>{
- if(+$('risk').value>0.5)$('risk').value=0.5;
- updateRisk();
-});
+$("startBtn").onclick=start;
+$("stopBtn").onclick=stop;
 
-updateRisk();
+$("resetBtn").onclick=()=>{
+ if(!confirm("Видалити журнал віртуальних угод?"))return;
+ trades=[];history=[];signals=[];seen={};
+ dailyTrades=0;losses=0;
+ save();render();
+};
+
+render();
 </script>
 </body>
 </html>
