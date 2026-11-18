@@ -991,4 +991,214 @@ async function scan() {
       return;
     }
 
-    // Оновлюємо ціну після ск
+    // Оновлюємо ціну після анування — перевіряємо знайдені сигнали.
+    signals = [];
+
+    for (const item of found) {
+      const price = Number(
+        tickers[item.symbol]?.lastPrice
+      );
+
+      if (!Number.isFinite(price) || price <= 0) {
+        continue;
+      }
+
+      if (!setupIsFresh(item)) {
+        continue;
+      }
+
+      if (signalWasUsed(item.symbol, item)) {
+        continue;
+      }
+
+      signals.push({
+        symbol: item.symbol,
+        side: item.side,
+        entry: price,
+        sl: item.sl,
+        level: item.level,
+        reason: item.reason
+      });
+
+      openPaper(item.symbol, item, price);
+    }
+
+    render();
+
+    if (status) {
+      status.textContent =
+        "● Сканування завершено. Перевірено пар: " +
+        ranked.length +
+        ". Знайдено сигналів: " +
+        signals.length;
+    }
+
+  } catch (e) {
+    console.error("Помилка сканера:", e);
+
+    if (status) {
+      status.textContent =
+        "Помилка: " + (e.message || "Невідома помилка");
+    }
+
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+function startScanner() {
+  if (running) return;
+
+  running = true;
+
+  const status = $("status");
+
+  if (status) {
+    status.textContent = "● Запуск сканера...";
+  }
+
+  scan();
+
+  const intervalInput =
+    Number($("interval")?.value) || 60;
+
+  const intervalMs = Math.max(
+    15000,
+    Math.min(3600000, intervalInput * 1000)
+  );
+
+  timer = setInterval(() => {
+    scan();
+  }, intervalMs);
+}
+
+function stopScanner() {
+  running = false;
+
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+
+  const status = $("status");
+
+  if (status) {
+    status.textContent = "Сканер зупинено.";
+  }
+}
+
+function resetJournal() {
+  if (running) {
+    stopScanner();
+  }
+
+  trades = [];
+  signals = [];
+  processed.clear();
+
+  dailyTrades = 0;
+  losses = 0;
+  dayKey = pragueDay();
+
+  save();
+  render();
+
+  const status = $("status");
+
+  if (status) {
+    status.textContent = "Журнал очищено.";
+  }
+}
+
+function connectButtons() {
+  const startIds = [
+    "startBtn",
+    "start",
+    "startScanner",
+    "scanBtn"
+  ];
+
+  const stopIds = [
+    "stopBtn",
+    "stop",
+    "stopScanner"
+  ];
+
+  const resetIds = [
+    "resetBtn",
+    "reset",
+    "resetJournal"
+  ];
+
+  function connect(ids, action) {
+    for (const id of ids) {
+      const button = $(id);
+
+      if (button && !button.dataset.connected) {
+        button.addEventListener("click", action);
+        button.dataset.connected = "true";
+      }
+    }
+  }
+
+  connect(startIds, startScanner);
+  connect(stopIds, stopScanner);
+  connect(resetIds, resetJournal);
+
+  // Додатковий пошук кнопок за їхнім написом.
+  document.querySelectorAll("button").forEach(button => {
+    if (button.dataset.connected) return;
+
+    const text = button.textContent
+      .trim()
+      .toLowerCase();
+
+    if (text.includes("запустити сканер")) {
+      button.addEventListener("click", startScanner);
+      button.dataset.connected = "true";
+
+    } else if (text.includes("зупинити")) {
+      button.addEventListener("click", stopScanner);
+      button.dataset.connected = "true";
+
+    } else if (text.includes("скинути журнал")) {
+      button.addEventListener("click", resetJournal);
+      button.dataset.connected = "true";
+    }
+  });
+}
+
+function init() {
+  try {
+    loadState();
+    render();
+    connectButtons();
+
+    console.log("ПРИХОВАНИЙ РОЗВОРОТ PRO завантажено.");
+
+  } catch (e) {
+    console.error("Помилка запуску:", e);
+
+    const status = $("status");
+
+    if (status) {
+      status.textContent =
+        "Помилка запуску: " + e.message;
+    }
+  }
+}
+
+// Дозволяємо запускати функції також через HTML.
+window.startScanner = startScanner;
+window.stopScanner = stopScanner;
+window.resetJournal = resetJournal;
+window.scan = scan;
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
+
+</script>
