@@ -31,6 +31,7 @@ th{color:#9eacc3}
 .short{color:#ff7885;font-weight:bold}
 .note{font-size:12px;color:#9eacc3;line-height:1.5}
 .warning{color:#ffd27a}
+.summary-value{font-size:22px;font-weight:bold;margin:12px 0}
 </style>
 </head>
 <body>
@@ -42,6 +43,7 @@ th{color:#9eacc3}
     <div id="status" role="status" aria-live="polite">Готовий до запуску.</div>
     <div class="grid" style="margin-top:12px">
       <div class="metric"><small>Завантажено пар</small><strong id="pairs">0</strong></div>
+      <div class="metric"><small>Угоди в серії</small><strong id="totalCount">0 / 50</strong></div>
       <div class="metric"><small>Сигнали</small><strong id="signalCount">0</strong></div>
       <div class="metric"><small>Відкриті угоди</small><strong id="openCount">0</strong></div>
       <div class="metric"><small>Закриті угоди</small><strong id="closedCount">0</strong></div>
@@ -59,7 +61,7 @@ th{color:#9eacc3}
         <input id="risk" type="number" min="0.01" max="0.5" step="0.01" value="0.5">
       </div>
       <div>
-        <label for="interval">Інтервал сканування, секунд</label>
+        <label for="interval">Інтервал перевірки, секунд</label>
         <input id="interval" type="number" min="15" max="3600" value="60">
       </div>
     </div>
@@ -68,7 +70,11 @@ th{color:#9eacc3}
       <button class="stop" id="stopBtn">■ Зупинити</button>
       <button class="reset" id="resetBtn">Скинути журнал</button>
     </div>
-    <p id="riskStatus" class="note">Кількість угод і стопів не обмежена.</p>
+    <p id="riskStatus" class="note">Ліміт серії: 50 угод. Після 50-ї нові входи припиняться.</p>
+  </section>
+  <section class="panel" id="finalSummaryPanel" style="display:none">
+    <h2>ФІНАЛЬНИЙ ПІДСУМОК 50 УГОД</h2>
+    <div id="finalSummary"></div>
   </section>
   <section class="panel">
     <h2>Поточні сигнали</h2>
@@ -83,15 +89,16 @@ th{color:#9eacc3}
     <p class="note">
       Сканер використовує спрощену модель Sweep → BOS → Retest на M5.
       Максимальний ризик — 0,5% депозиту на угоду.
-      Денна кількість угод не обмежена. Кількість збитків також не обмежена:
-      сканер продовжує пошук нових сигналів після стопів.
+      У серії максимум 50 угод. Після 50-ї нові входи припиняються,
+      але відкриті угоди продовжують контролюватися до закриття.
+      Кількість збитків поспіль не блокує роботу сканера.
     </p>
     <p class="note warning">
       Це експериментальний paper trading, а не перевірена прибуткова стратегія.
-      Сигнали не є фінансовою рекомендацією. Реальні ордери не відкриваються.
-      Комісії, прослизання та funding не враховуються. Контроль SL/TP
-      відбувається за ціною під час опитування API, тому внутрішньосвічкові
-      торкання рівнів можуть бути пропущені.
+      Реальні ордери не відкриваються. Комісії, прослизання та funding
+      не враховуються. Контроль SL/TP відбувається за ціною під час
+      опитування API, тому внутрішньосвічкові торкання рівнів можуть бути пропущені.
+      Сканер працює лише поки відкрита вкладка сайту.
     </p>
   </section>
 </main>
@@ -101,6 +108,7 @@ const API = "https://api.bybit.com";
 const $ = id => document.getElementById(id);
 const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
 const MAX_RISK_PERCENT = 0.5;
+const MAX_TOTAL_TRADES = 50;
 const SCAN_BATCH_SIZE = 8;
 let running = false;
 let busy = false;
@@ -184,6 +192,13 @@ function loadState() {
   });
   trades.forEach(t => {
     if (t.id) processed.add(t.id);
+    // Підготовка старих угод до нового обліку TP і SL.
+    if (!Number.isFinite(Number(t.tpProfit))) {
+      t.tpProfit = Math.max(0, Number(t.realized) || 0);
+    }
+    if (!Number.isFinite(Number(t.slLoss))) {
+      t.slLoss = Math.max(0, -(Number(t.realized) || 0));
+    }
   });
   dailyTrades = trades.filter(t =>
     t.opened && pragueDay(new Date(t.opened)) === dayKey
@@ -414,9 +429,12 @@ function fmt(value) {
 }
 function openPaper(symbol, setup, price) {
   resetDay();
+  // Загальний ліміт усієї серії — 50 угод.
+  if (trades.length >= MAX_TOTAL_TRADES) return false;
   if (!setupIsFresh(setup)) return false;
   if (signalWasUsed(symbol, setup)) return false;
-  // Денний ліміт угод і ліміт збитків вимкнені.
+  // Блокування після збитків відсутнє.
+  // Денний ліміт угод відсутній.
   if (trades.some(t =>
     t.symbol === symbol && t.status === "OPEN"
   )) return false;
@@ -472,6 +490,8 @@ function openPaper(symbol, setup, price) {
     tp3: price + direction * distance * 3,
     r: distance,
     realized: 0,
+    tpProfit: 0,
+    slLoss: 0,
     status: "OPEN",
     opened: Date.now(),
     hit1: false,
@@ -482,21 +502,32 @@ function openPaper(symbol, setup, price) {
   save();
   return true;
 }
-function closeQty(t, price, qty) {
-  const q = Math.min(t.qty, qty);
+// reason: TP або SL. Дає змогу окремо підрахувати прибуток і збитки.
+function closeQty(t, price, qty, reason = "OTHER") {
+  const q = Math.min(Number(t.qty), Number(qty));
   if (!Number.isFinite(q) || q <= 0) return;
   const direction = t.side === "LONG" ? 1 : -1;
-  t.realized += (price - t.entry) * direction * q;
-  t.qty -= q;
+  const pnl = (Number(price) - Number(t.entry)) * direction * q;
+  t.realized = (Number(t.realized) || 0) + pnl;
+  if (reason === "TP") {
+    t.tpProfit = (Number(t.tpProfit) || 0) + Math.max(0, pnl);
+  }
+  if (reason === "SL") {
+    t.slLoss = (Number(t.slLoss) || 0) + Math.max(0, -pnl);
+  }
+  t.qty = Math.max(0, Number(t.qty) - q);
   if (t.qty < t.initialQty * 0.000001) {
     t.qty = 0;
   }
 }
-function finish(t, price) {
+function finish(t, price, reason = "SL") {
   if (t.status !== "OPEN") return;
-  if (t.qty > 0) closeQty(t, price, t.qty);
+  if (t.qty > 0) {
+    closeQty(t, price, t.qty, reason);
+  }
   t.status = "CLOSED";
   t.closed = Date.now();
+  t.exitReason = reason;
   losses = countTodayLosses();
   save();
 }
@@ -509,32 +540,36 @@ function updateTrades(prices) {
     const third = t.initialQty / 3;
     if (t.side === "LONG") {
       if (price <= t.sl) {
-        finish(t, t.sl);
+        finish(t, t.sl, "SL");
         continue;
       }
       if (!t.hit1 && price >= t.tp1) {
-        closeQty(t, t.tp1, third);
+        closeQty(t, t.tp1, third, "TP");
         t.hit1 = true;
       }
       if (!t.hit2 && price >= t.tp2) {
-        closeQty(t, t.tp2, third);
+        closeQty(t, t.tp2, third, "TP");
         t.hit2 = true;
       }
-      if (price >= t.tp3) finish(t, t.tp3);
+      if (price >= t.tp3) {
+        finish(t, t.tp3, "TP");
+      }
     } else {
       if (price >= t.sl) {
-        finish(t, t.sl);
+        finish(t, t.sl, "SL");
         continue;
       }
       if (!t.hit1 && price <= t.tp1) {
-        closeQty(t, t.tp1, third);
+        closeQty(t, t.tp1, third, "TP");
         t.hit1 = true;
       }
       if (!t.hit2 && price <= t.tp2) {
-        closeQty(t, t.tp2, third);
+        closeQty(t, t.tp2, third, "TP");
         t.hit2 = true;
       }
-      if (price <= t.tp3) finish(t, t.tp3);
+      if (price <= t.tp3) {
+        finish(t, t.tp3, "TP");
+      }
     }
   }
   save();
@@ -548,13 +583,56 @@ function escapeHTML(value) {
     "'": "&#39;"
   })[c]);
 }
+function renderFinalSummary() {
+  const panel = $("finalSummaryPanel");
+  const open = trades.filter(t => t.status === "OPEN").length;
+  const closed = trades.filter(t => t.status === "CLOSED").length;
+  if (trades.length < MAX_TOTAL_TRADES || open > 0) {
+    panel.style.display = "none";
+    return;
+  }
+  const tpProfit = trades.reduce(
+    (sum, t) => sum + (Number(t.tpProfit) || 0),
+    0
+  );
+  const slLoss = trades.reduce(
+    (sum, t) => sum + (Number(t.slLoss) || 0),
+    0
+  );
+  const net = trades.reduce(
+    (sum, t) => sum + (Number(t.realized) || 0),
+    0
+  );
+  const resultClass = net >= 0 ? "long" : "short";
+  panel.style.display = "block";
+  $("finalSummary").innerHTML = `
+    <p>Усього угод: <b>${trades.length} / ${MAX_TOTAL_TRADES}</b></p>
+    <p>Закрито угод: <b>${closed}</b></p>
+    <p class="summary-value long">
+      Загальний прибуток від TP: +${tpProfit.toFixed(2)} USDT
+    </p>
+    <p class="summary-value short">
+      Загальні збитки від SL: -${slLoss.toFixed(2)} USDT
+    </p>
+    <hr style="border-color:#34445e">
+    <p class="summary-value ${resultClass}">
+      ЧИСТИЙ РЕЗУЛЬТАТ:
+      ${net >= 0 ? "+" : ""}${net.toFixed(2)} USDT
+    </p>
+    <p class="note">
+      Результат розрахований за віртуальними цінами виконання.
+      Комісії, прослизання та funding не враховані.
+    </p>
+  `;
+}
 function render() {
+  const openCount = trades.filter(t => t.status === "OPEN").length;
+  const closedCount = trades.filter(t => t.status === "CLOSED").length;
   $("pairs").textContent = symbols.length;
+  $("totalCount").textContent = trades.length + " / " + MAX_TOTAL_TRADES;
   $("signalCount").textContent = signals.length;
-  $("openCount").textContent =
-    trades.filter(t => t.status === "OPEN").length;
-  $("closedCount").textContent =
-    trades.filter(t => t.status === "CLOSED").length;
+  $("openCount").textContent = openCount;
+  $("closedCount").textContent = closedCount;
   $("signals").innerHTML = signals.length
     ? `<table>
         <thead><tr>
@@ -573,7 +651,7 @@ function render() {
         </tbody>
       </table>`
     : "Актуальних сигналів поки немає.";
-  const recent = trades.slice(0, 30);
+  const recent = trades.slice(0, 50);
   $("trades").innerHTML = recent.length
     ? `<table>
         <thead><tr>
@@ -591,22 +669,61 @@ function render() {
             <td>${fmt(t.tp2)}</td>
             <td>${fmt(t.tp3)}</td>
             <td>${escapeHTML(t.status)}</td>
-            <td>${Number(t.realized || 0).toFixed(2)}</td>
+            <td>${(Number(t.realized) || 0).toFixed(2)}</td>
           </tr>`).join("")}
         </tbody>
       </table>`
     : "Угод ще немає.";
   $("riskStatus").textContent =
-    "Угод сьогодні: " + dailyTrades +
+    "Угод у серії: " + trades.length + " / " + MAX_TOTAL_TRADES +
+    ". Відкрито: " + openCount +
     ". Збитків поспіль: " + losses +
-    ". Кількість угод і стопів не обмежена.";
+    ". Після 50 угод нові входи зупиняться.";
+  renderFinalSummary();
+}
+function finishSeriesIfReady() {
+  const openCount = trades.filter(t => t.status === "OPEN").length;
+  if (trades.length >= MAX_TOTAL_TRADES && openCount === 0) {
+    stopScanner();
+    signals = [];
+    render();
+    $("status").textContent =
+      "Усі 50 угод закриті. Серію завершено. Фінальний результат готовий.";
+    return true;
+  }
+  return false;
 }
 async function scan() {
   if (busy || !running) return;
   busy = true;
-  $("status").textContent = "● Сканування ринку...";
   try {
     resetDay();
+    $("status").textContent = "● Перевірка ринку...";
+    // Якщо 50 угод уже відкрито або закрито,
+    // нові сигнали більше не шукаємо.
+    // Тільки оновлюємо ціни відкритих угод.
+    if (trades.length >= MAX_TOTAL_TRADES) {
+      const tickers = await tickerMap();
+      if (!running) return;
+      const prices = {};
+      for (const t of trades) {
+        if (t.status === "OPEN" && tickers[t.symbol]) {
+          prices[t.symbol] = Number(tickers[t.symbol].lastPrice);
+        }
+      }
+      updateTrades(prices);
+      signals = [];
+      render();
+      const openNow = trades.filter(t => t.status === "OPEN").length;
+      if (openNow === 0) {
+        finishSeriesIfReady();
+      } else {
+        $("status").textContent =
+          "Ліміт 50 угод досягнуто. Нові входи вимкнені. " +
+          "Контролюємо відкриті угоди: " + openNow;
+      }
+      return;
+    }
     if (!symbols.length) {
       $("status").textContent = "Завантаження списку торгових пар...";
       symbols = await loadSymbols();
@@ -627,9 +744,13 @@ async function scan() {
       }
     }
     updateTrades(prices);
+    if (finishSeriesIfReady()) return;
     const found = [];
     for (let i = 0; i < ranked.length; i += SCAN_BATCH_SIZE) {
       if (!running) break;
+      // Якщо під час сканування досягнуто 50 угод,
+      // не продовжуємо шукати нові входи.
+      if (trades.length >= MAX_TOTAL_TRADES) break;
       const batch = ranked.slice(i, i + SCAN_BATCH_SIZE);
       const results = await Promise.all(
         batch.map(async symbol => {
@@ -645,36 +766,51 @@ async function scan() {
       );
       found.push(...results.filter(Boolean));
       $("status").textContent =
-        "● Перевірено " + Math.min(i + SCAN_BATCH_SIZE, ranked.length) +
+        "● Перевірено " +
+        Math.min(i + SCAN_BATCH_SIZE, ranked.length) +
         " із " + ranked.length + " пар...";
       await delay(120);
     }
     if (!running) return;
     signals = [];
     for (const item of found) {
+      if (trades.length >= MAX_TOTAL_TRADES) break;
       const price = Number(tickers[item.symbol]?.lastPrice);
       if (!Number.isFinite(price) || price <= 0) continue;
       if (!setupIsFresh(item)) continue;
       if (signalWasUsed(item.symbol, item)) continue;
-      signals.push({
-        symbol: item.symbol,
-        side: item.side,
-        entry: price,
-        sl: item.sl,
-        level: item.level,
-        reason: item.reason
-      });
-      openPaper(item.symbol, item, price);
+      const opened = openPaper(item.symbol, item, price);
+      if (opened) {
+        signals.push({
+          symbol: item.symbol,
+          side: item.side,
+          entry: price,
+          sl: item.sl,
+          level: item.level,
+          reason: item.reason
+        });
+      }
     }
     render();
-    $("status").textContent =
-      "● Сканування завершено. Перевірено пар: " +
-      ranked.length +
-      ". Нових сигналів: " +
-      signals.length;
+    if (trades.length >= MAX_TOTAL_TRADES) {
+      const openNow = trades.filter(t => t.status === "OPEN").length;
+      $("status").textContent =
+        "Досягнуто 50 угод. Нові входи зупинено. " +
+        "Відкритих угод залишилося: " + openNow;
+      if (openNow === 0) {
+        finishSeriesIfReady();
+      }
+    } else {
+      $("status").textContent =
+        "● Сканування завершено. Перевірено пар: " +
+        ranked.length +
+        ". Угод у серії: " +
+        trades.length + " / " + MAX_TOTAL_TRADES;
+    }
   } catch (e) {
     console.error("Помилка сканера:", e);
-    $("status").textContent = "Помилка: " + (e.message || "Невідома помилка");
+    $("status").textContent =
+      "Помилка: " + (e.message || "Невідома помилка");
   } finally {
     busy = false;
     render();
@@ -682,11 +818,15 @@ async function scan() {
 }
 function startScanner() {
   if (running) return;
+  if (finishSeriesIfReady()) return;
   running = true;
   $("status").textContent = "● Запуск сканера...";
   scan();
   const seconds = Number($("interval").value) || 60;
-  const intervalMs = Math.max(15000, Math.min(3600000, seconds * 1000));
+  const intervalMs = Math.max(
+    15000,
+    Math.min(3600000, seconds * 1000)
+  );
   timer = setInterval(scan, intervalMs);
 }
 function stopScanner() {
@@ -695,7 +835,9 @@ function stopScanner() {
     clearInterval(timer);
     timer = null;
   }
-  $("status").textContent = "Сканер зупинено.";
+  if (trades.length < MAX_TOTAL_TRADES) {
+    $("status").textContent = "Сканер зупинено вручну.";
+  }
 }
 function resetJournal() {
   if (!confirm("Очистити всі віртуальні угоди та журнал?")) return;
@@ -717,11 +859,24 @@ function init() {
     $("startBtn").addEventListener("click", startScanner);
     $("stopBtn").addEventListener("click", stopScanner);
     $("resetBtn").addEventListener("click", resetJournal);
-    $("status").textContent = "Готовий до запуску. Віртуальна торгівля.";
+    if (trades.length >= MAX_TOTAL_TRADES) {
+      const openNow = trades.filter(t => t.status === "OPEN").length;
+      if (openNow === 0) {
+        finishSeriesIfReady();
+      } else {
+        $("status").textContent =
+          "50 угод уже набрано. Запусти перевірку, щоб контролювати відкриті угоди.";
+      }
+    } else {
+      $("status").textContent =
+        "Готовий до запуску. Угод у серії: " +
+        trades.length + " / " + MAX_TOTAL_TRADES;
+    }
     console.log("ПРИХОВАНИЙ РОЗВОРОТ PRO завантажено.");
   } catch (e) {
     console.error("Помилка запуску:", e);
-    $("status").textContent = "Помилка запуску: " + e.message;
+    $("status").textContent =
+      "Помилка запуску: " + e.message;
   }
 }
 window.startScanner = startScanner;
