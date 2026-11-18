@@ -105,9 +105,8 @@ th{color:#9eacc3}
 
 const API = "https://api.bybit.com";
 const $ = id => document.getElementById(id);
-
+const MAX_DAILY_TRADES = Infinity;
 const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
-const MAX_DAILY_TRADES = 3;
 const MAX_DAILY_LOSSES = 2;
 const MAX_RISK_PERCENT = 0.5;
 const SCAN_BATCH_SIZE = 8;
