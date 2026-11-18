@@ -22,69 +22,53 @@ button{background:#f0b90b;color:#111;border:0;border-radius:8px;padding:12px 18p
 </style>
 </head>
 <body>
-
 <h1>BYBIT SIGNALS</h1>
 <div class="info">USDT Perpetual · Europe/Prague · рівні попереднього дня · REAL-TIME</div>
-
 <div id="status">Підготовка...</div>
-
 <div id="progress">
   <div id="progressText">Очікування запуску...</div>
   <div id="bar"><div id="fill"></div></div>
 </div>
-
 <div class="info" id="summary"></div>
 
-<button id="reloadButton" type="button">Перезапустити сканер</button>
+Перезапустити сканер
 
 <h2>Сигнали</h2>
 <div id="signals">Очікування даних...</div>
-
 <h2>Монети біля рівнів</h2>
 <div id="coins">Очікування даних...</div>
-
 <script>
 "use strict";
-
 const API = "https://api.bybit.com";
 const WS_URL = "wss://stream.bybit.com/v5/public/linear";
-
 const $ = id => document.getElementById(id);
-
 const MAX_SYMBOLS = 200;
 const WORKERS = 3;
 const WORKER_DELAY = 350;
-
 const TP_OFFSET = 0.002;
 const SL_RATIO = 3;
-const MIN_PROFIT_PERCENT = 20;
+const MIN_PROFIT_PERCENT = 10;
 const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
 const STORAGE_KEY = "bybitSignals_v5";
-
 let symbols = [];
 let prices = {};
 let levels = {};
 let signals = [];
 let priceTickSizes = {};
-
 let completed = 0;
 let failed = 0;
-
 let tickerSocket = null;
 let reconnectTimer = null;
 let pingTimer = null;
 let renderTimer = null;
-
 let reconnectDelay = 2000;
 let wsBaseline = new Set();
 let pendingSignals = new Set();
 let lastSignalAttempts = new Map();
-
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
   "USDP","PYUSD","RLUSD","USD1","USDD","USTC"
 ]);
-
 const NON_CRYPTO = new Set([
   "MSFT","SPY","QQQ","AAPL","TSLA","NVDA","AMZN","META",
   "GOOGL","GOOG","MSTR","COIN","MARA","PLTR","AMD","INTC",
@@ -98,48 +82,35 @@ const NON_CRYPTO = new Set([
   "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK",
   "ALAB","SOFI","SNOW"
 ]);
-
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 function setStatus(text) {
   $("status").textContent = text;
 }
-
 function showError(error) {
   const message = error && error.message
     ? error.message
     : String(error);
-
   setStatus("Помилка: " + message);
   $("progressText").textContent =
     "Завантаження зупинено. Натисни «Перезапустити сканер».";
 }
-
 /* Форматування тільки для показу.
    На торгові розрахунки ця функція не впливає. */
 function formatPrice(symbol, value) {
   const number = Number(value);
-
   if (!Number.isFinite(number)) return String(value);
-
   const tickSize = priceTickSizes[symbol];
-
   if (!tickSize) return String(number);
-
   const text = String(tickSize).toLowerCase();
   const parts = text.split("e");
-
   const coefficient = parts[0];
   const exponent = parts.length > 1
     ? Number(parts[1])
     : 0;
-
   const decimalPart = coefficient.split(".")[1] || "";
   const decimals = Math.max(0, decimalPart.length - exponent);
-
   return number.toFixed(Math.min(decimals, 20));
 }
-
 function pragueDate(date) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Prague",
@@ -147,18 +118,14 @@ function pragueDate(date) {
     month: "2-digit",
     day: "2-digit"
   }).formatToParts(date);
-
   const values = {};
   parts.forEach(p => values[p.type] = p.value);
-
   return values.year + "-" + values.month + "-" + values.day;
 }
-
 function pragueMidnight(dateText) {
   const [y,m,d] = dateText.split("-").map(Number);
   const target = Date.UTC(y,m-1,d);
   let guess = target;
-
   for (let i=0;i<3;i++) {
     const parts = new Intl.DateTimeFormat("en-GB", {
       timeZone: "Europe/Prague",
@@ -170,10 +137,8 @@ function pragueMidnight(dateText) {
       second: "2-digit",
       hourCycle: "h23"
     }).formatToParts(new Date(guess));
-
     const v = {};
     parts.forEach(p => v[p.type] = p.value);
-
     const shown = Date.UTC(
       Number(v.year),
       Number(v.month)-1,
@@ -182,70 +147,53 @@ function pragueMidnight(dateText) {
       Number(v.minute),
       Number(v.second)
     );
-
     guess += target-shown;
   }
-
   return guess;
 }
-
 async function getJSON(path) {
   let lastError = null;
-
   for (let attempt=0; attempt<2; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
       15000
     );
-
     try {
       const response = await fetch(API + path, {
         method: "GET",
         signal: controller.signal,
         cache: "no-store"
       });
-
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
       }
-
       const json = await response.json();
-
       if (json.retCode !== 0) {
         throw new Error(
           json.retMsg || ("Помилка Bybit " + json.retCode)
         );
       }
-
       return json.result;
-
     } catch(error) {
       lastError = error;
-
       if (attempt === 0) {
         await sleep(700);
       }
-
     } finally {
       clearTimeout(timeout);
     }
   }
-
   if (lastError && lastError.name === "AbortError") {
     throw new Error("Bybit не відповів за 15 секунд");
   }
-
   throw lastError || new Error("Помилка з'єднання з Bybit");
 }
-
 function isCryptoContract(x) {
   const base = String(x.baseCoin || "").toUpperCase();
   const symbol = String(x.symbol || "").toUpperCase();
-
   const isForex =
     /^(EUR|GBP|USD|JPY|AUD|NZD|CAD|CHF){2}$/.test(base);
-
   return x.status === "Trading" &&
     x.quoteCoin === "USDT" &&
     x.contractType === "LinearPerpetual" &&
@@ -255,69 +203,50 @@ function isCryptoContract(x) {
     !base.includes("STOCK") &&
     !isForex;
 }
-
 async function loadSymbols() {
   let cursor = "";
   const all = [];
   let pages = 0;
-
   setStatus("Завантажую список контрактів Bybit...");
-
   do {
     let url =
       "/v5/market/instruments-info?category=linear&limit=1000";
-
     if (cursor) {
       url += "&cursor=" + encodeURIComponent(cursor);
     }
-
     const result = await getJSON(url);
-
     all.push(...(result.list || []));
     cursor = result.nextPageCursor || "";
     pages++;
-
     $("progressText").textContent =
       "Отримано контрактів: " + all.length;
-
     if (pages > 20) {
       throw new Error("Занадто багато сторінок контрактів");
     }
-
   } while (cursor);
-
   const filtered = all.filter(isCryptoContract);
-
   if (!filtered.length) {
     throw new Error("Не знайдено криптовалютних контрактів");
   }
-
   return filtered;
 }
-
 async function loadTickers(contracts) {
   setStatus("Завантажую поточні ціни Bybit...");
-
   /* Зберігаємо крок ціни кожної монети з Bybit */
   priceTickSizes = {};
-
   contracts.forEach(contract => {
     const tickSize = contract.priceFilter &&
       contract.priceFilter.tickSize;
-
     if (tickSize && Number(tickSize) > 0) {
       priceTickSizes[contract.symbol] = String(tickSize);
     }
   });
-
   const result = await getJSON(
     "/v5/market/tickers?category=linear"
   );
-
   const allowed = new Set(
     contracts.map(x => x.symbol)
   );
-
   const list = (result.list || [])
     .filter(x =>
       allowed.has(x.symbol) &&
@@ -328,23 +257,18 @@ async function loadTickers(contracts) {
       Number(a.turnover24h || 0)
     )
     .slice(0,MAX_SYMBOLS);
-
   if (!list.length) {
     throw new Error("Не вдалося отримати ціни монет");
   }
-
   symbols = list.map(x => x.symbol);
   prices = {};
-
   list.forEach(x => {
     prices[x.symbol] = Number(x.lastPrice);
   });
-
   $("summary").textContent =
     "Відібрано активних криптовалют: " +
     symbols.length;
 }
-
 async function loadOneLevel(symbol,startTime,endTime) {
   const url =
     "/v5/market/kline?category=linear" +
@@ -353,18 +277,13 @@ async function loadOneLevel(symbol,startTime,endTime) {
     "&start=" + startTime +
     "&end=" + endTime +
     "&limit=100";
-
   const result = await getJSON(url);
   const candles = result.list || [];
-
   if (!candles.length) return null;
-
   let high = -Infinity;
   let low = Infinity;
-
   candles.forEach(c => {
     const candleTime = Number(c[0]);
-
     if (
       candleTime >= startTime &&
       candleTime < endTime
@@ -373,7 +292,6 @@ async function loadOneLevel(symbol,startTime,endTime) {
       low = Math.min(low,Number(c[3]));
     }
   });
-
   if (
     !Number.isFinite(high) ||
     !Number.isFinite(low) ||
@@ -382,148 +300,111 @@ async function loadOneLevel(symbol,startTime,endTime) {
   ) {
     return null;
   }
-
   return {high,low};
 }
-
 function updateProgress() {
   const percent = symbols.length
     ? Math.round(completed/symbols.length*100)
     : 0;
-
   $("fill").style.width = percent + "%";
-
   $("progressText").textContent =
     "Рівнів завантажено: " + completed +
     " із " + symbols.length +
     " (" + percent + "%). Помилок: " + failed;
-
   $("summary").textContent =
     "Криптовалют: " + symbols.length +
     " · Рівнів готово: " + Object.keys(levels).length;
 }
-
 async function loadAllLevels() {
   const today = pragueDate(new Date());
   const todayStart = pragueMidnight(today);
-
   const yesterday = pragueDate(
     new Date(todayStart - 12*60*60*1000)
   );
-
   const startTime = pragueMidnight(yesterday);
   const endTime = todayStart - 1;
-
   setStatus(
     "Завантажую рівні попереднього дня за часовим поясом Праги..."
   );
-
   $("progressText").textContent =
     "Підготовка рівнів...";
-
   let nextIndex = 0;
-
   async function worker() {
     while (nextIndex < symbols.length) {
       const index = nextIndex++;
       const symbol = symbols[index];
-
       try {
         const level = await loadOneLevel(
           symbol,startTime,endTime
         );
-
         if (level) {
           levels[symbol] = level;
         }
-
       } catch(error) {
         failed++;
       }
-
       completed++;
       updateProgress();
-
       await sleep(WORKER_DELAY);
     }
   }
-
   const tasks = [];
-
   for (let i=0; i<WORKERS; i++) {
     tasks.push(worker());
   }
-
   await Promise.all(tasks);
-
   if (!Object.keys(levels).length) {
     throw new Error("Не вдалося завантажити жодного рівня");
   }
-
   $("progressText").textContent =
     "Завантаження рівнів завершено: " +
     Object.keys(levels).length +
     " із " + symbols.length;
 }
-
 async function calculateTradeLevels(symbol,side,entry) {
   const url =
     "/v5/market/kline?category=linear" +
     "&symbol=" + encodeURIComponent(symbol) +
     "&interval=15&limit=100";
-
   const result = await getJSON(url);
-
   const candles = (result.list || [])
     .slice()
     .sort((a,b) => Number(a[0])-Number(b[0]));
-
   const now = Date.now();
-
   const closed = candles.filter(c =>
     Number(c[0]) + 15*60*1000 <= now
   );
-
   const last24h = closed.filter(c =>
     Number(c[0]) >= now - 24*60*60*1000
   );
-
   if (last24h.length < 10) return null;
-
   const highs = [];
   const lows = [];
-
   for (let i=2; i<last24h.length-2; i++) {
     const h = Number(last24h[i][2]);
     const l = Number(last24h[i][3]);
-
     const prevHighs = [
       Number(last24h[i-2][2]),
       Number(last24h[i-1][2])
     ];
-
     const nextHighs = [
       Number(last24h[i+1][2]),
       Number(last24h[i+2][2])
     ];
-
     const prevLows = [
       Number(last24h[i-2][3]),
       Number(last24h[i-1][3])
     ];
-
     const nextLows = [
       Number(last24h[i+1][3]),
       Number(last24h[i+2][3])
     ];
-
     if (
       prevHighs.every(v => h > v) &&
       nextHighs.every(v => h >= v)
     ) {
       highs.push(h);
     }
-
     if (
       prevLows.every(v => l < v) &&
       nextLows.every(v => l <= v)
@@ -531,42 +412,30 @@ async function calculateTradeLevels(symbol,side,entry) {
       lows.push(l);
     }
   }
-
   let target = 0;
   let tp = 0;
   let sl = 0;
-
   if (side === "LONG") {
     const candidates = highs
       .filter(h => h > entry)
       .sort((a,b) => a-b);
-
     if (!candidates.length) return null;
-
     target = candidates[0];
     tp = target*(1-TP_OFFSET);
-
     if (tp <= entry) return null;
-
     const risk = (tp-entry)/SL_RATIO;
     sl = entry-risk;
-
   } else {
     const candidates = lows
       .filter(l => l < entry)
       .sort((a,b) => b-a);
-
     if (!candidates.length) return null;
-
     target = candidates[0];
     tp = target*(1+TP_OFFSET);
-
     if (tp >= entry) return null;
-
     const risk = (entry-tp)/SL_RATIO;
     sl = entry+risk;
   }
-
   if (
     ![entry,tp,sl,target].every(Number.isFinite) ||
     entry <= 0 ||
@@ -576,19 +445,15 @@ async function calculateTradeLevels(symbol,side,entry) {
   ) {
     return null;
   }
-
   return {entry,tp,sl,target};
 }
-
 function signalIsFresh(s) {
   const timestamp = Number(s && s.candleTime);
-
   return Number.isFinite(timestamp) &&
     timestamp > 0 &&
     Date.now()-timestamp <= MAX_SIGNAL_AGE_MS &&
     Date.now() >= timestamp;
 }
-
 function validSignal(s) {
   return s &&
     typeof s.symbol === "string" &&
@@ -600,7 +465,6 @@ function validSignal(s) {
     Number(s.profitPercent) >= MIN_PROFIT_PERCENT &&
     signalIsFresh(s);
 }
-
 function hasRecentSignal(symbol,side) {
   return signals.some(s =>
     s.symbol === symbol &&
@@ -608,47 +472,34 @@ function hasRecentSignal(symbol,side) {
     Date.now()-Number(s.candleTime) < MAX_SIGNAL_AGE_MS
   );
 }
-
 async function createLiveSignal(symbol,side,entry) {
   const key = symbol + "_" + side;
-
   if (pendingSignals.has(key)) return;
-
   const lastAttempt = lastSignalAttempts.get(key) || 0;
-
   if (Date.now()-lastAttempt < 2*60*1000) {
     return;
   }
-
   if (hasRecentSignal(symbol,side)) return;
-
   pendingSignals.add(key);
   lastSignalAttempts.set(key,Date.now());
-
   try {
     const trade = await calculateTradeLevels(
       symbol,side,entry
     );
-
     if (!trade) return;
-
     const profitPercent = side === "LONG"
       ? (trade.tp-entry)/entry*100
       : (entry-trade.tp)/entry*100;
-
     const riskPercent = Math.abs(
       entry-trade.sl
     )/entry*100;
-
     if (
       !Number.isFinite(profitPercent) ||
       profitPercent < MIN_PROFIT_PERCENT
     ) {
       return;
     }
-
     const now = Date.now();
-
     const signal = {
       symbol,
       side,
@@ -663,25 +514,19 @@ async function createLiveSignal(symbol,side,entry) {
         timeZone: "Europe/Prague"
       })
     };
-
     signals.push(signal);
     signals = signals.filter(validSignal);
-
     saveSignals();
     render();
-
   } catch(error) {
     console.warn("Signal error:",symbol,error);
   } finally {
     pendingSignals.delete(key);
   }
 }
-
 function handleLivePrice(symbol,previousPrice,currentPrice) {
   const level = levels[symbol];
-
   if (!level) return;
-
   if (
     !Number.isFinite(previousPrice) ||
     !Number.isFinite(currentPrice) ||
@@ -690,17 +535,14 @@ function handleLivePrice(symbol,previousPrice,currentPrice) {
   ) {
     return;
   }
-
   const longTrigger = level.high*1.001;
   const shortTrigger = level.low*0.999;
-
   if (
     previousPrice <= longTrigger &&
     currentPrice > longTrigger
   ) {
     createLiveSignal(symbol,"LONG",currentPrice);
   }
-
   if (
     previousPrice >= shortTrigger &&
     currentPrice < shortTrigger
@@ -708,7 +550,6 @@ function handleLivePrice(symbol,previousPrice,currentPrice) {
     createLiveSignal(symbol,"SHORT",currentPrice);
   }
 }
-
 function saveSignals() {
   try {
     localStorage.setItem(
@@ -719,10 +560,8 @@ function saveSignals() {
     console.warn("Storage error:",error);
   }
 }
-
 function render() {
   signals = signals.filter(validSignal);
-
   $("signals").innerHTML = signals.length
     ? signals.slice(-30).reverse().map(s => `
       <div class="card">
@@ -743,19 +582,15 @@ function render() {
         <span class="small">${s.time || ""}</span>
       </div>
     `).join("")
-    : "<div class='info'>Актуальних сигналів із потенційним рухом від 20% поки немає.</div>";
-
+    : "<div class='info'>Актуальних сигналів із потенційним рухом від 10% поки немає.</div>";
   saveSignals();
-
   const near = symbols
     .filter(s => levels[s] && prices[s] > 0)
     .map(s => {
       const price = prices[s];
       const level = levels[s];
-
       const dh = (level.high-price)/price*100;
       const dl = (price-level.low)/price*100;
-
       return {
         symbol:s,
         price,
@@ -768,7 +603,6 @@ function render() {
     .filter(x => x.dist <= 1)
     .sort((a,b) => a.dist-b.dist)
     .slice(0,50);
-
   $("coins").innerHTML = near.length
     ? near.map(x => `
       <div class="card">
@@ -782,16 +616,13 @@ function render() {
     `).join("")
     : "<div class='info'>Монет біля рівнів зараз немає.</div>";
 }
-
 function scheduleRender() {
   if (renderTimer) return;
-
   renderTimer = setTimeout(() => {
     renderTimer = null;
     render();
   },1000);
 }
-
 function connectWebSocket() {
   if (
     tickerSocket &&
@@ -802,26 +633,19 @@ function connectWebSocket() {
   ) {
     return;
   }
-
   clearTimeout(reconnectTimer);
   clearInterval(pingTimer);
-
   setStatus("Підключення до потоку цін Bybit...");
-
   wsBaseline = new Set();
-
   try {
     tickerSocket = new WebSocket(WS_URL);
   } catch(error) {
     scheduleReconnect();
     return;
   }
-
   tickerSocket.onopen = () => {
     reconnectDelay = 2000;
-
     setStatus("WebSocket підключено. Підписуюсь на ціни...");
-
     pingTimer = setInterval(() => {
       if (tickerSocket &&
           tickerSocket.readyState === WebSocket.OPEN) {
@@ -830,12 +654,9 @@ function connectWebSocket() {
         }));
       }
     },20000);
-
     const topics = symbols.map(s => "tickers."+s);
-
     for (let i=0; i<topics.length; i+=50) {
       const batch = topics.slice(i,i+50);
-
       setTimeout(() => {
         if (
           tickerSocket &&
@@ -849,16 +670,13 @@ function connectWebSocket() {
       },Math.floor(i/50)*150);
     }
   };
-
   tickerSocket.onmessage = event => {
     let message;
-
     try {
       message = JSON.parse(event.data);
     } catch(error) {
       return;
     }
-
     if (
       message.success === false ||
       (message.op === "subscribe" && message.success === false)
@@ -867,22 +685,17 @@ function connectWebSocket() {
         (message.ret_msg || "невідома помилка"));
       return;
     }
-
     if (!message.topic ||
         !message.topic.startsWith("tickers.")) {
       return;
     }
-
     const data = Array.isArray(message.data)
       ? message.data
       : [message.data];
-
     data.forEach(item => {
       if (!item || !item.symbol) return;
-
       const symbol = item.symbol;
       const currentPrice = Number(item.lastPrice);
-
       if (
         !symbols.includes(symbol) ||
         !Number.isFinite(currentPrice) ||
@@ -890,110 +703,82 @@ function connectWebSocket() {
       ) {
         return;
       }
-
       const previousPrice = prices[symbol];
-
       if (!wsBaseline.has(symbol)) {
         wsBaseline.add(symbol);
         prices[symbol] = currentPrice;
-
         if (wsBaseline.size === 1) {
           setStatus(
             "REAL-TIME активний · ціни надходять від Bybit."
           );
         }
-
         scheduleRender();
         return;
       }
-
       prices[symbol] = currentPrice;
-
       handleLivePrice(
         symbol,
         previousPrice,
         currentPrice
       );
-
       scheduleRender();
     });
   };
-
   tickerSocket.onerror = () => {
     setStatus("Помилка WebSocket. Перепідключення...");
   };
-
   tickerSocket.onclose = () => {
     clearInterval(pingTimer);
-
     setStatus("З'єднання перервано. Перепідключення...");
-
     scheduleReconnect();
   };
 }
-
 function scheduleReconnect() {
   if (reconnectTimer) return;
-
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-
     if (document.visibilityState === "visible") {
       connectWebSocket();
     }
   },reconnectDelay);
-
   reconnectDelay = Math.min(
     reconnectDelay*2,
     30000
   );
 }
-
 async function init() {
   $("reloadButton").addEventListener("click",() => {
     location.reload();
   });
-
   try {
     try {
       const saved = JSON.parse(
         localStorage.getItem(STORAGE_KEY) || "[]"
       );
-
       if (Array.isArray(saved)) {
         signals = saved.filter(validSignal);
       }
     } catch(error) {
       signals = [];
     }
-
     render();
-
     const contracts = await loadSymbols();
-
     setStatus(
       "Знайдено контрактів: " + contracts.length +
       ". Завантажую ціни..."
     );
-
     await loadTickers(contracts);
-
     await loadAllLevels();
-
     render();
-
     setStatus(
       "Рівні завантажено. Запускаю REAL-TIME ціни..."
     );
-
     connectWebSocket();
-
   } catch(error) {
     showError(error);
     console.error(error);
   }
 }
-
 document.addEventListener("visibilitychange",() => {
   if (
     document.visibilityState === "visible" &&
@@ -1006,9 +791,7 @@ document.addEventListener("visibilitychange",() => {
     connectWebSocket();
   }
 });
-
 init();
-
 </script>
 </body>
 </html>
