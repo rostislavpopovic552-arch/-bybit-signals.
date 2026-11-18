@@ -31,13 +31,12 @@ button{background:#f0b90b;color:#111;border:0;border-radius:8px;padding:12px 18p
 </div>
 <div class="info" id="summary"></div>
 
-<button id="reloadButton" type="button">Перезапустити сканер</button>
+Перезапустити сканер
 
 <h2>Сигнали</h2>
 <div id="signals">Очікування даних...</div>
 <h2>Монети біля рівнів</h2>
 <div id="coins">Очікування даних...</div>
-
 <script>
 "use strict";
 const API = "https://api.bybit.com";
@@ -48,7 +47,7 @@ const WORKERS = 3;
 const WORKER_DELAY = 350;
 const TP_OFFSET = 0.002;
 const SL_RATIO = 3;
-const MIN_PROFIT_PERCENT = 10;
+const MIN_PROFIT_PERCENT = 5;
 const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
 const STORAGE_KEY = "bybitSignals_v5";
 let symbols = [];
@@ -66,12 +65,10 @@ let reconnectDelay = 2000;
 let wsBaseline = new Set();
 let pendingSignals = new Set();
 let lastSignalAttempts = new Map();
-
 const STABLECOINS = new Set([
   "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
   "USDP","PYUSD","RLUSD","USD1","USDD","USTC"
 ]);
-
 const NON_CRYPTO = new Set([
   "MSFT","SPY","QQQ","AAPL","TSLA","NVDA","AMZN","META",
   "GOOGL","GOOG","MSTR","COIN","MARA","PLTR","AMD","INTC",
@@ -85,13 +82,10 @@ const NON_CRYPTO = new Set([
   "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK",
   "ALAB","SOFI","SNOW"
 ]);
-
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 function setStatus(text) {
   $("status").textContent = text;
 }
-
 function showError(error) {
   const message = error && error.message
     ? error.message
@@ -100,7 +94,6 @@ function showError(error) {
   $("progressText").textContent =
     "Завантаження зупинено. Натисни «Перезапустити сканер».";
 }
-
 /* Форматування тільки для показу.
    На торгові розрахунки ця функція не впливає. */
 function formatPrice(symbol, value) {
@@ -118,7 +111,6 @@ function formatPrice(symbol, value) {
   const decimals = Math.max(0, decimalPart.length - exponent);
   return number.toFixed(Math.min(decimals, 20));
 }
-
 function pragueDate(date) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Prague",
@@ -130,7 +122,6 @@ function pragueDate(date) {
   parts.forEach(p => values[p.type] = p.value);
   return values.year + "-" + values.month + "-" + values.day;
 }
-
 function pragueMidnight(dateText) {
   const [y,m,d] = dateText.split("-").map(Number);
   const target = Date.UTC(y,m-1,d);
@@ -160,7 +151,6 @@ function pragueMidnight(dateText) {
   }
   return guess;
 }
-
 async function getJSON(path) {
   let lastError = null;
   for (let attempt=0; attempt<2; attempt++) {
@@ -199,7 +189,6 @@ async function getJSON(path) {
   }
   throw lastError || new Error("Помилка з'єднання з Bybit");
 }
-
 function isCryptoContract(x) {
   const base = String(x.baseCoin || "").toUpperCase();
   const symbol = String(x.symbol || "").toUpperCase();
@@ -214,7 +203,6 @@ function isCryptoContract(x) {
     !base.includes("STOCK") &&
     !isForex;
 }
-
 async function loadSymbols() {
   let cursor = "";
   const all = [];
@@ -242,7 +230,6 @@ async function loadSymbols() {
   }
   return filtered;
 }
-
 async function loadTickers(contracts) {
   setStatus("Завантажую поточні ціни Bybit...");
   /* Зберігаємо крок ціни кожної монети з Bybit */
@@ -282,7 +269,6 @@ async function loadTickers(contracts) {
     "Відібрано активних криптовалют: " +
     symbols.length;
 }
-
 async function loadOneLevel(symbol,startTime,endTime) {
   const url =
     "/v5/market/kline?category=linear" +
@@ -316,7 +302,6 @@ async function loadOneLevel(symbol,startTime,endTime) {
   }
   return {high,low};
 }
-
 function updateProgress() {
   const percent = symbols.length
     ? Math.round(completed/symbols.length*100)
@@ -330,7 +315,6 @@ function updateProgress() {
     "Криптовалют: " + symbols.length +
     " · Рівнів готово: " + Object.keys(levels).length;
 }
-
 async function loadAllLevels() {
   const today = pragueDate(new Date());
   const todayStart = pragueMidnight(today);
@@ -377,7 +361,6 @@ async function loadAllLevels() {
     Object.keys(levels).length +
     " із " + symbols.length;
 }
-
 async function calculateTradeLevels(symbol,side,entry) {
   const url =
     "/v5/market/kline?category=linear" +
@@ -464,7 +447,6 @@ async function calculateTradeLevels(symbol,side,entry) {
   }
   return {entry,tp,sl,target};
 }
-
 function signalIsFresh(s) {
   const timestamp = Number(s && s.candleTime);
   return Number.isFinite(timestamp) &&
@@ -472,7 +454,6 @@ function signalIsFresh(s) {
     Date.now()-timestamp <= MAX_SIGNAL_AGE_MS &&
     Date.now() >= timestamp;
 }
-
 function validSignal(s) {
   return s &&
     typeof s.symbol === "string" &&
@@ -484,7 +465,6 @@ function validSignal(s) {
     Number(s.profitPercent) >= MIN_PROFIT_PERCENT &&
     signalIsFresh(s);
 }
-
 function hasRecentSignal(symbol,side) {
   return signals.some(s =>
     s.symbol === symbol &&
@@ -492,7 +472,6 @@ function hasRecentSignal(symbol,side) {
     Date.now()-Number(s.candleTime) < MAX_SIGNAL_AGE_MS
   );
 }
-
 async function createLiveSignal(symbol,side,entry) {
   const key = symbol + "_" + side;
   if (pendingSignals.has(key)) return;
@@ -545,7 +524,6 @@ async function createLiveSignal(symbol,side,entry) {
     pendingSignals.delete(key);
   }
 }
-
 function handleLivePrice(symbol,previousPrice,currentPrice) {
   const level = levels[symbol];
   if (!level) return;
@@ -572,7 +550,6 @@ function handleLivePrice(symbol,previousPrice,currentPrice) {
     createLiveSignal(symbol,"SHORT",currentPrice);
   }
 }
-
 function saveSignals() {
   try {
     localStorage.setItem(
@@ -583,7 +560,6 @@ function saveSignals() {
     console.warn("Storage error:",error);
   }
 }
-
 function render() {
   signals = signals.filter(validSignal);
   $("signals").innerHTML = signals.length
@@ -606,7 +582,7 @@ function render() {
         <span class="small">${s.time || ""}</span>
       </div>
     `).join("")
-    : "<div class='info'>Актуальних сигналів із потенційним рухом від 10% поки немає.</div>";
+    : "<div class='info'>Актуальних сигналів із потенційним рухом від 5% поки немає.</div>";
   saveSignals();
   const near = symbols
     .filter(s => levels[s] && prices[s] > 0)
@@ -640,7 +616,6 @@ function render() {
     `).join("")
     : "<div class='info'>Монет біля рівнів зараз немає.</div>";
 }
-
 function scheduleRender() {
   if (renderTimer) return;
   renderTimer = setTimeout(() => {
@@ -648,7 +623,6 @@ function scheduleRender() {
     render();
   },1000);
 }
-
 function connectWebSocket() {
   if (
     tickerSocket &&
@@ -759,7 +733,6 @@ function connectWebSocket() {
     scheduleReconnect();
   };
 }
-
 function scheduleReconnect() {
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
@@ -773,7 +746,6 @@ function scheduleReconnect() {
     30000
   );
 }
-
 async function init() {
   $("reloadButton").addEventListener("click",() => {
     location.reload();
@@ -807,7 +779,6 @@ async function init() {
     console.error(error);
   }
 }
-
 document.addEventListener("visibilitychange",() => {
   if (
     document.visibilityState === "visible" &&
@@ -820,7 +791,6 @@ document.addEventListener("visibilitychange",() => {
     connectWebSocket();
   }
 });
-
 init();
 </script>
 </body>
