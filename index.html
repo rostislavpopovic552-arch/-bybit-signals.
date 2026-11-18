@@ -57,7 +57,7 @@ const WORKER_DELAY = 350;
 
 const TP_OFFSET = 0.002;
 const SL_RATIO = 3;
-const MIN_PROFIT_PERCENT = 0.30;
+const MIN_PROFIT_PERCENT = 20;
 const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
 const STORAGE_KEY = "bybitSignals_v5";
 
@@ -743,7 +743,7 @@ function render() {
         <span class="small">${s.time || ""}</span>
       </div>
     `).join("")
-    : "<div class='info'>Актуальних сигналів із прибутком від 0,30% поки немає.</div>";
+    : "<div class='info'>Актуальних сигналів із потенційним рухом від 20% поки немає.</div>";
 
   saveSignals();
 
