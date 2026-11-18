@@ -539,5 +539,405 @@ $("resetBtn").onclick = () => {
   render();
 };
 
+/* ===== PATCH: захист від повторних сигналів ===== */
+
+const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
+
+function pragueDay(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Prague",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  const v = {};
+  parts.forEach(p => v[p.type] = p.value);
+  return `${v.year}-${v.month}-${v.day}`;
+}
+
+function signalId(symbol, setup) {
+  const level = Number(setup.level).toFixed(10);
+  return `${symbol}-${setup.side}-${setup.sweepTime}-${level}`;
+}
+
+function legacySignalId(symbol, setup) {
+  return `${symbol}-${setup.side}-${setup.time}`;
+}
+
+function setupIsFresh(setup) {
+  const closedAt = Number(setup.time) + 5 * 60 * 1000;
+  const age = Date.now() - closedAt;
+
+  return Number.isFinite(closedAt) &&
+    age >= 0 &&
+    age <= SIGNAL_MAX_AGE_MS;
+}
+
+function signalWasUsed(symbol, setup) {
+  const id = signalId(symbol, setup);
+  const oldId = legacySignalId(symbol, setup);
+
+  return processed.has(id) ||
+    processed.has(oldId) ||
+    trades.some(t =>
+      t.id === id ||
+      t.id === oldId ||
+      (
+        t.symbol === symbol &&
+        t.side === setup.side &&
+        Number(t.sweepTime) === Number(setup.sweepTime)
+      )
+    );
+}
+
+/* Прибираємо дублікати старих угод */
+{
+  const seen = new Set();
+
+  trades = trades.filter(t => {
+    const key = t.id ||
+      `${t.symbol}-${t.side}-${t.opened}-${t.entry}`;
+
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
+/* Відновлюємо використані ідентифікатори */
+processed = new Set([
+  ...processed,
+  ...trades.map(t => t.id).filter(Boolean)
+]);
+
+/* Денний облік за часом Праги */
+dayKey = pragueDay();
+
+dailyTrades = trades.filter(t =>
+  t.opened && pragueDay(new Date(t.opened)) === dayKey
+).length;
+
+function countTodayLosses() {
+  const closed = trades
+    .filter(t =>
+      t.status === "CLOSED" &&
+      t.closed &&
+      pragueDay(new Date(t.closed)) === dayKey
+    )
+    .sort((a, b) => Number(b.closed) - Number(a.closed));
+
+  let count = 0;
+
+  for (const t of closed) {
+    if (Number(t.realized) < 0) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  return count;
+}
+
+losses = countTodayLosses();
+
+function resetDay() {
+  const today = pragueDay();
+
+  if (today !== dayKey) {
+    dayKey = today;
+
+    dailyTrades = trades.filter(t =>
+      t.opened &&
+      pragueDay(new Date(t.opened)) === dayKey
+    ).length;
+
+    losses = countTodayLosses();
+    save();
+  }
+}
+
+/* Пошук тільки свіжого Sweep → BOS → Retest */
+function findSetup(candleList) {
+  const a = candleList.slice(0, -1);
+
+  if (a.length < 20) return null;
+
+  const last = a.length - 1;
+  const latestClose = a[last].time + 5 * 60 * 1000;
+  const age = Date.now() - latestClose;
+
+  if (age < 0 || age > SIGNAL_MAX_AGE_MS) {
+    return null;
+  }
+
+  for (
+    let i = last - 2;
+    i >= Math.max(10, last - 10);
+    i--
+  ) {
+    const previous = a.slice(i - 10, i);
+
+    const support = Math.min(...previous.map(x => x.low));
+    const resistance = Math.max(...previous.map(x => x.high));
+
+    const sweep = a[i];
+    const retest = a[last];
+
+    /* LONG */
+    if (sweep.low < support && sweep.close > support) {
+      const level = Math.max(...previous.map(x => x.high));
+
+      let bos = false;
+
+      for (let j = i + 1; j < last; j++) {
+        if (a[j].close > level) {
+          bos = true;
+          break;
+        }
+      }
+
+      if (
+        bos &&
+        retest.low <= level * 1.002 &&
+        retest.close > level &&
+        retest.close > retest.open
+      ) {
+        return {
+          side: "LONG",
+          level,
+          sl: sweep.low * 0.999,
+          time: retest.time,
+          sweepTime: sweep.time,
+          retestClose: retest.close,
+          reason: "Sweep → BOS → Retest"
+        };
+      }
+    }
+
+    /* SHORT */
+    if (sweep.high > resistance && sweep.close < resistance) {
+      const level = Math.min(...previous.map(x => x.low));
+
+      let bos = false;
+
+      for (let j = i + 1; j < last; j++) {
+        if (a[j].close < level) {
+          bos = true;
+          break;
+        }
+      }
+
+      if (
+        bos &&
+        retest.high >= level * 0.998 &&
+        retest.close < level &&
+        retest.close < retest.open
+      ) {
+        return {
+          side: "SHORT",
+          level,
+          sl: sweep.high * 1.001,
+          time: retest.time,
+          sweepTime: sweep.time,
+          retestClose: retest.close,
+          reason: "Sweep → BOS → Retest"
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/* Захищене відкриття віртуальної угоди */
+function openPaper(symbol, setup, price) {
+  resetDay();
+
+  if (!setupIsFresh(setup)) return false;
+  if (signalWasUsed(symbol, setup)) return false;
+
+  if (losses >= 2 || dailyTrades >= 3) return false;
+
+  if (trades.some(t =>
+    t.symbol === symbol && t.status === "OPEN"
+  )) return false;
+
+  price = Number(price);
+
+  if (!Number.isFinite(price) || price <= 0) return false;
+
+  const distance = Math.abs(price - setup.sl);
+
+  if (!distance || distance / price > 0.025) return false;
+
+  if (Math.abs(price - setup.level) / price > 0.003) {
+    return false;
+  }
+
+  if (
+    setup.retestClose &&
+    Math.abs(price - setup.retestClose) / price > 0.005
+  ) {
+    return false;
+  }
+
+  if (setup.side === "LONG" && price <= setup.sl) return false;
+  if (setup.side === "SHORT" && price >= setup.sl) return false;
+
+  const deposit = Math.max(
+    1,
+    Number($("deposit").value) || 1000
+  );
+
+  const risk = Math.min(
+    0.5,
+    Math.max(0.1, Number($("risk").value) || 0.5)
+  );
+
+  const riskMoney = deposit * risk / 100;
+  const qty = riskMoney / distance;
+  const direction = setup.side === "LONG" ? 1 : -1;
+
+  const id = signalId(symbol, setup);
+  const oldId = legacySignalId(symbol, setup);
+
+  const trade = {
+    id,
+    symbol,
+    side: setup.side,
+    entry: price,
+    sl: setup.sl,
+    level: setup.level,
+    sweepTime: setup.sweepTime,
+    qty,
+    initialQty: qty,
+    tp1: price + direction * distance,
+    tp2: price + direction * distance * 2,
+    tp3: price + direction * distance * 3,
+    r: distance,
+    realized: 0,
+    status: "OPEN",
+    opened: Date.now(),
+    hit1: false,
+    hit2: false
+  };
+
+  trades.unshift(trade);
+
+  processed.add(id);
+  processed.add(oldId);
+
+  dailyTrades++;
+
+  save();
+
+  return true;
+}
+
+/* Повторне сканування з перевіркою актуальної ціни */
+async function scan() {
+  if (busy || !running) return;
+
+  busy = true;
+  $("status").textContent = "● Сканування ринку...";
+
+  try {
+    resetDay();
+
+    if (!symbols.length) {
+      symbols = await loadSymbols();
+    }
+
+    const tickers = await tickerMap();
+
+    const ranked = symbols
+      .filter(s => tickers[s])
+      .sort((a, b) =>
+        Number(tickers[b].turnover24h) -
+        Number(tickers[a].turnover24h)
+      )
+      .slice(0, 25);
+
+    const prices = {};
+
+    for (const symbol of symbols) {
+      if (
+        tickers[symbol] &&
+        trades.some(t =>
+          t.symbol === symbol && t.status === "OPEN"
+        )
+      ) {
+        prices[symbol] = Number(tickers[symbol].lastPrice);
+      }
+    }
+
+    updateTrades(prices);
+
+    const found = [];
+
+    for (let i = 0; i < ranked.length; i += 4) {
+      const batch = ranked.slice(i, i + 4);
+
+      const results = await Promise.all(
+        batch.map(async symbol => {
+          try {
+            const data = await candles(symbol);
+            const setup = findSetup(data);
+
+            if (!setup) return null;
+
+            return { symbol, ...setup };
+
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+
+      found.push(...results.filter(Boolean));
+    }
+
+    /* Оновлюємо ціни ще раз після завантаження свічок */
+    const freshTickers = await tickerMap();
+
+    signals = found
+      .map(s => ({
+        ...s,
+        entry: Number(freshTickers[s.symbol]?.lastPrice)
+      }))
+      .filter(s =>
+        Number.isFinite(s.entry) &&
+        s.entry > 0 &&
+        setupIsFresh(s) &&
+        !signalWasUsed(s.symbol, s)
+      );
+
+    for (const s of signals) {
+      openPaper(s.symbol, s, s.entry);
+    }
+
+    /* Прибираємо сигнал одразу після використання */
+    signals = signals.filter(s =>
+      !signalWasUsed(s.symbol, s)
+    );
+
+    $("updated").textContent =
+      "Оновлено: " + new Date().toLocaleTimeString();
+
+    $("status").textContent = "● Сканер працює";
+
+  } catch (e) {
+    $("status").textContent = "Помилка: " + e.message;
+
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+/* ===== КІНЕЦЬ PATCH ===== */
+
 render();
-</script>
