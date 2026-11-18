@@ -2,864 +2,1107 @@
 <html lang="uk">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bybit Signals</title>
+
 <style>
 *{box-sizing:border-box}
-body{font-family:Arial,sans-serif;background:#10141d;color:#eee;margin:0;padding:16px}
-h1{color:#f0b90b;margin:8px 0}
-h2{font-size:20px;margin-top:24px}
-.info{color:#aaa;font-size:14px;margin:8px 0}
-#status{background:#202938;border-radius:8px;padding:12px;margin:12px 0;line-height:1.5}
-#progress{background:#252c38;border-radius:8px;padding:12px;margin:14px 0}
-#bar{height:8px;background:#333;border-radius:8px;overflow:hidden;margin-top:8px}
-#fill{height:100%;width:0;background:#f0b90b;transition:width .2s}
-.card{background:#1b2230;border-radius:10px;padding:12px;margin:10px 0;line-height:1.7;overflow-wrap:anywhere}
-.green{color:#35d07f}
-.red{color:#ff6262}
-.small{font-size:13px;color:#aaa}
-button{background:#f0b90b;color:#111;border:0;border-radius:8px;padding:12px 18px;font-weight:bold;margin:8px 0;cursor:pointer}
-button:active{opacity:.8}
+body{
+  margin:0;
+  padding:18px;
+  background:#0b1020;
+  color:#e8edf7;
+  font-family:Arial,sans-serif;
+}
+.container{max-width:1100px;margin:auto}
+h1{margin:0 0 8px;font-size:27px}
+.subtitle{color:#9ba8bd;font-size:13px;margin-bottom:20px}
+.panel{
+  background:#151e30;
+  border:1px solid #26344b;
+  border-radius:12px;
+  padding:16px;
+  margin-bottom:16px;
+}
+.status{font-size:14px;color:#f5c76b;margin-bottom:12px}
+.progress{
+  height:8px;
+  background:#29364c;
+  border-radius:10px;
+  overflow:hidden;
+  margin:10px 0;
+}
+#fill{
+  height:100%;
+  width:0%;
+  background:#27c98b;
+  transition:width .2s;
+}
+button{
+  border:0;
+  border-radius:8px;
+  padding:11px 16px;
+  background:#2477ed;
+  color:white;
+  font-weight:bold;
+  cursor:pointer;
+}
+button:disabled{opacity:.5}
+.stats{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+}
+.stat{
+  background:#10192a;
+  padding:13px;
+  border-radius:9px;
+}
+.stat small{display:block;color:#9ba8bd;margin-bottom:7px}
+.stat strong{font-size:21px}
+.signal{
+  background:#10192a;
+  border:1px solid #29364c;
+  border-radius:9px;
+  padding:13px;
+  margin:10px 0;
+}
+.signal-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:9px;
+}
+.coin{font-weight:bold;font-size:17px}
+.long{color:#28d69a}
+.short{color:#ff687d}
+.badge{
+  padding:4px 8px;
+  border-radius:5px;
+  background:#24334a;
+  font-size:12px;
+  font-weight:bold;
+}
+.details{
+  color:#b7c4d8;
+  font-size:13px;
+  line-height:1.8;
+}
+.info{color:#9ba8bd;font-size:13px;padding:10px 0}
+.error{color:#ff7888}
+.time{color:#8fa0b8;font-size:12px}
+@media(max-width:600px){
+  body{padding:11px}
+  .stats{grid-template-columns:1fr}
+}
 </style>
 </head>
+
 <body>
+<div class="container">
 
-<h1>BYBIT SIGNALS</h1>
-<div class="info">USDT Perpetual · Europe/Prague · рівні попереднього дня · REAL-TIME</div>
+  <h1>BYBIT SIGNALS</h1>
+  <div class="subtitle">
+    USDT Perpetual · Europe/Prague · рівні попереднього дня · REAL-TIME
+  </div>
 
-<div id="status">Підготовка...</div>
+  <div class="panel">
+    <div id="status" class="status">Підготовка...</div>
 
-<div id="progress">
-  <div id="progressText">Очікування запуску...</div>
-  <div id="bar"><div id="fill"></div></div>
+    <div class="progress">
+      <div id="fill"></div>
+    </div>
+
+    <div id="progressText" class="time">
+      Очікування запуску...
+    </div>
+
+    <br>
+    <button id="reloadButton">Перезапустити сканер</button>
+  </div>
+
+  <div class="panel stats">
+    <div class="stat">
+      <small>Монет завантажено</small>
+      <strong id="coinCount">0</strong>
+    </div>
+
+    <div class="stat">
+      <small>Активних сигналів</small>
+      <strong id="signalCount">0</strong>
+    </div>
+
+    <div class="stat">
+      <small>WebSocket</small>
+      <strong id="wsStatus">OFF</strong>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Сигнали</h3>
+    <div id="signals">
+      <div class="info">Очікування даних...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Монети біля рівнів</h3>
+    <div id="nearLevels">
+      <div class="info">Очікування даних...</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="time">
+      Час оновлення: <span id="lastUpdate">—</span>
+    </div>
+    <div class="time">
+      Дані надходять із публічного API Bybit.
+    </div>
+    <div class="time">
+      Сигнали є технічними спостереженнями, а не гарантією прибутку.
+      Перед торгівлею перевіряй ризик і ліквідність.
+    </div>
+  </div>
+
 </div>
-
-<div class="info" id="summary"></div>
-
-<button id="reloadButton" type="button">Перезапустити сканер</button>
-
-<h2>Сигнали</h2>
-<div id="signals">Очікування даних...</div>
-
-<h2>Монети біля рівнів</h2>
-<div id="coins">Очікування даних...</div>
 
 <script>
 "use strict";
 
+/* =========================
+   НАЛАШТУВАННЯ
+========================= */
+
 const API = "https://api.bybit.com";
 const WS_URL = "wss://stream.bybit.com/v5/public/linear";
 
-const $ = id => document.getElementById(id);
-
-const MAX_SYMBOLS = 200;
-const WORKERS = 3;
-const WORKER_DELAY = 350;
-const TP_OFFSET = 0.002;
-const SL_RATIO = 3;
 const MIN_PROFIT_PERCENT = 0.5;
-const MAX_SIGNAL_AGE_MS = 2 * 60 * 60 * 1000;
-const STORAGE_KEY = "bybitSignals_v5";
+
+// Відстань до рівня, за якої монета вважається близькою.
+const NEAR_LEVEL_PERCENT = 0.30;
+
+// Максимальна кількість монет у списку біля рівнів.
+const MAX_NEAR_ITEMS = 40;
+
+// Мінімальна затримка між REST-запитами.
+const REQUEST_DELAY = 130;
+
+const STORAGE_KEY = "bybit_signals_v3";
+
+/* =========================
+   СТАН
+========================= */
 
 let symbols = [];
 let prices = {};
 let levels = {};
 let signals = [];
-let priceTickSizes = {};
-
-let completed = 0;
-let failed = 0;
 
 let tickerSocket = null;
 let reconnectTimer = null;
 let pingTimer = null;
-let renderTimer = null;
 let reconnectDelay = 2000;
 
+let completed = 0;
+let failed = 0;
+let running = false;
+
+let renderTimer = null;
+let lastRequestTime = 0;
 let wsBaseline = new Set();
-let pendingSignals = new Set();
-let lastSignalAttempts = new Map();
 
-const STABLECOINS = new Set([
-  "USDT","USDC","USDE","USDS","DAI","TUSD","FDUSD",
-  "USDP","PYUSD","RLUSD","USD1","USDD","USTC"
-]);
+/* =========================
+   ДОПОМІЖНІ ФУНКЦІЇ
+========================= */
 
-const NON_CRYPTO = new Set([
-  "MSFT","SPY","QQQ","AAPL","TSLA","NVDA","AMZN","META",
-  "GOOGL","GOOG","MSTR","COIN","MARA","PLTR","AMD","INTC",
-  "NFLX","DIS","BABA","PDD","NIO","XOM","JPM","BAC",
-  "GS","V","MA","WMT","COST","KO","PEP","JNJ","PFE",
-  "MRK","ABBV","LLY","ISRG","IBM","CRM","FUTU","MEITUAN",
-  "BYD","IWM","TZA","TBT","EWZ","XLI","RDW","FISV",
-  "EURUSD","GBPUSD","USDJPY","AUDUSD","NZDUSD","USDCAD",
-  "USDCHF","XAU","XAG","WTI","BRENT",
-  "BTDR","FLNC","HANMI","RAM","MDB","HD","ACN",
-  "HIMS","POPMART","MP","DRAM","FLEX","CVXSTOCK",
-  "ALAB","SOFI","SNOW"
-]);
+function $(id){
+  return document.getElementById(id);
+}
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function setStatus(text) {
+function setStatus(text){
   $("status").textContent = text;
 }
 
-function showError(error) {
-  const message = error && error.message
-    ? error.message
-    : String(error);
+function setProgress(value,text){
+  const safe = Math.max(0,Math.min(100,value));
+  $("fill").style.width = safe + "%";
 
-  setStatus("Помилка: " + message);
-
-  $("progressText").textContent =
-    "Завантаження зупинено. Перевір з'єднання та перезапусти сканер.";
+  if(text){
+    $("progressText").textContent = text;
+  }
 }
 
-function formatPrice(symbol, value) {
-  const number = Number(value);
+function formatPrice(value){
+  if(!Number.isFinite(value)) return "—";
 
-  if (!Number.isFinite(number)) return String(value);
-
-  const tickSize = priceTickSizes[symbol];
-
-  if (!tickSize) return String(number);
-
-  const text = String(tickSize).toLowerCase();
-  const parts = text.split("e");
-  const coefficient = parts[0];
-
-  const exponent = parts.length > 1
-    ? Number(parts[1])
-    : 0;
-
-  const decimalPart = coefficient.split(".")[1] || "";
-  const decimals = Math.max(0, decimalPart.length - exponent);
-
-  return number.toFixed(Math.min(decimals, 20));
+  return value.toLocaleString("en-US",{
+    maximumFractionDigits:10
+  });
 }
 
-function pragueDate(date) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Prague",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
+function formatPercent(value){
+  return Number(value).toFixed(2) + "%";
+}
+
+function nowPrague(){
+  return new Date().toLocaleString("uk-UA",{
+    timeZone:"Europe/Prague"
+  });
+}
+
+function getPragueYesterdayRange(){
+  const parts = new Intl.DateTimeFormat("en-CA",{
+    timeZone:"Europe/Prague",
+    year:"numeric",
+    month:"2-digit",
+    day:"2-digit"
+  }).formatToParts(new Date());
 
   const values = {};
 
-  parts.forEach(p => values[p.type] = p.value);
+  parts.forEach(p=>{
+    values[p.type] = p.value;
+  });
 
-  return values.year + "-" + values.month + "-" + values.day;
+  const today = new Date(
+    Number(values.year),
+    Number(values.month)-1,
+    Number(values.day)
+  );
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate()-1);
+
+  const startLocal = new Date(
+    yesterday.getFullYear(),
+    yesterday.getMonth(),
+    yesterday.getDate(),
+    0,0,0
+  );
+
+  const endLocal = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+    0,0,0
+  );
+
+  const start = localPragueToUTC(startLocal);
+  const end = localPragueToUTC(endLocal);
+
+  return {
+    start:start.getTime(),
+    end:end.getTime()
+  };
 }
 
-function pragueMidnight(dateText) {
-  const [y,m,d] = dateText.split("-").map(Number);
+function localPragueToUTC(date){
+  // Визначаємо зміщення Europe/Prague для конкретної дати.
+  const utcGuess = new Date(date.getTime());
 
-  const target = Date.UTC(y,m-1,d);
-  let guess = target;
+  const formatted = new Intl.DateTimeFormat("en-US",{
+    timeZone:"Europe/Prague",
+    year:"numeric",
+    month:"2-digit",
+    day:"2-digit",
+    hour:"2-digit",
+    minute:"2-digit",
+    second:"2-digit",
+    hourCycle:"h23"
+  }).formatToParts(utcGuess);
 
-  for (let i=0;i<3;i++) {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Europe/Prague",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23"
-    }).formatToParts(new Date(guess));
+  const p = {};
+  formatted.forEach(x=>p[x.type]=x.value);
 
-    const v = {};
+  const represented = Date.UTC(
+    Number(p.year),
+    Number(p.month)-1,
+    Number(p.day),
+    Number(p.hour),
+    Number(p.minute),
+    Number(p.second)
+  );
 
-    parts.forEach(p => v[p.type] = p.value);
+  return new Date(
+    date.getTime() + (date.getTime()-represented)
+  );
+}
 
-    const shown = Date.UTC(
-      Number(v.year),
-      Number(v.month)-1,
-      Number(v.day),
-      Number(v.hour),
-      Number(v.minute),
-      Number(v.second)
-    );
+function sleep(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
 
-    guess += target-shown;
+async function waitForRequestSlot(){
+  const now = Date.now();
+  const wait = Math.max(
+    0,
+    REQUEST_DELAY - (now-lastRequestTime)
+  );
+
+  if(wait>0) await sleep(wait);
+
+  lastRequestTime = Date.now();
+}
+
+async function apiGet(path,params){
+  await waitForRequestSlot();
+
+  const query = new URLSearchParams(params);
+
+  const response = await fetch(
+    API + path + "?" + query.toString()
+  );
+
+  if(!response.ok){
+    throw new Error("HTTP " + response.status);
   }
 
-  return guess;
-}
+  const json = await response.json();
 
-async function getJSON(path) {
-  let lastError = null;
-
-  for (let attempt=0; attempt<2; attempt++) {
-    const controller = new AbortController();
-
-    const timeout = setTimeout(
-      () => controller.abort(),
-      15000
-    );
-
-    try {
-      const response = await fetch(API + path, {
-        method: "GET",
-        signal: controller.signal,
-        cache: "no-store"
-      });
-
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
-
-      const json = await response.json();
-
-      if (json.retCode !== 0) {
-        throw new Error(
-          json.retMsg || ("Помилка Bybit " + json.retCode)
-        );
-      }
-
-      return json.result;
-
-    } catch(error) {
-      lastError = error;
-
-      if (attempt === 0) {
-        await sleep(700);
-      }
-
-    } finally {
-      clearTimeout(timeout);
-    }
+  if(json.retCode !== 0){
+    throw new Error(json.retMsg || "Помилка Bybit API");
   }
 
-  if (lastError && lastError.name === "AbortError") {
-    throw new Error("Bybit не відповів за 15 секунд");
-  }
-
-  throw lastError || new Error("Помилка з'єднання з Bybit");
+  return json.result;
 }
 
-function isCryptoContract(x) {
-  const base = String(x.baseCoin || "").toUpperCase();
-  const symbol = String(x.symbol || "").toUpperCase();
+/* =========================
+   ЗАВАНТАЖЕННЯ МОНЕТ
+========================= */
 
-  const isForex =
-    /^(EUR|GBP|USD|JPY|AUD|NZD|CAD|CHF){2}$/.test(base);
-
-  return x.status === "Trading" &&
-    x.quoteCoin === "USDT" &&
-    x.contractType === "LinearPerpetual" &&
-    symbol === base + "USDT" &&
-    !STABLECOINS.has(base) &&
-    !NON_CRYPTO.has(base) &&
-    !base.includes("STOCK") &&
-    !isForex;
-}
-
-async function loadSymbols() {
+async function loadSymbols(){
   let cursor = "";
-  const all = [];
-  let pages = 0;
+  const result = [];
 
-  setStatus("Завантажую список контрактів Bybit...");
+  do{
+    const params = {
+      category:"linear",
+      limit:"1000",
+      status:"Trading"
+    };
 
-  do {
-    let url =
-      "/v5/market/instruments-info?category=linear&limit=1000";
-
-    if (cursor) {
-      url += "&cursor=" + encodeURIComponent(cursor);
+    if(cursor){
+      params.cursor = cursor;
     }
 
-    const result = await getJSON(url);
+    const data = await apiGet(
+      "/v5/market/instruments-info",
+      params
+    );
 
-    all.push(...(result.list || []));
+    data.list.forEach(item=>{
+      if(
+        item.quoteCoin === "USDT" &&
+        item.settleCoin === "USDT" &&
+        item.contractType === "LinearPerpetual" &&
+        item.status === "Trading"
+      ){
+        result.push(item.symbol);
+      }
+    });
 
-    cursor = result.nextPageCursor || "";
-    pages++;
+    cursor = data.nextPageCursor || "";
 
-    $("progressText").textContent =
-      "Отримано контрактів: " + all.length;
+  }while(cursor);
 
-    if (pages > 20) {
-      throw new Error("Занадто багато сторінок контрактів");
-    }
-
-  } while (cursor);
-
-  const filtered = all.filter(isCryptoContract);
-
-  if (!filtered.length) {
-    throw new Error("Не знайдено криптовалютних контрактів");
-  }
-
-  return filtered;
+  return [...new Set(result)];
 }
 
-async function loadTickers(contracts) {
-  setStatus("Завантажую поточні ціни Bybit...");
+/* =========================
+   ПОТОЧНІ ЦІНИ
+========================= */
 
-  priceTickSizes = {};
+async function loadTickers(){
+  const data = await apiGet(
+    "/v5/market/tickers",
+    {category:"linear"}
+  );
 
-  contracts.forEach(contract => {
-    const tickSize = contract.priceFilter &&
-      contract.priceFilter.tickSize;
+  data.list.forEach(item=>{
+    if(!item.symbol || !item.lastPrice) return;
 
-    if (tickSize && Number(tickSize) > 0) {
-      priceTickSizes[contract.symbol] = String(tickSize);
+    const price = Number(item.lastPrice);
+
+    if(Number.isFinite(price) && price>0){
+      prices[item.symbol] = price;
     }
   });
-
-  const result = await getJSON(
-    "/v5/market/tickers?category=linear"
-  );
-
-  const allowed = new Set(
-    contracts.map(x => x.symbol)
-  );
-
-  const list = (result.list || [])
-    .filter(x =>
-      allowed.has(x.symbol) &&
-      Number(x.lastPrice) > 0
-    )
-    .sort((a,b) =>
-      Number(b.turnover24h || 0) -
-      Number(a.turnover24h || 0)
-    )
-    .slice(0,MAX_SYMBOLS);
-
-  if (!list.length) {
-    throw new Error("Не вдалося отримати ціни монет");
-  }
-
-  symbols = list.map(x => x.symbol);
-  prices = {};
-
-  list.forEach(x => {
-    prices[x.symbol] = Number(x.lastPrice);
-  });
-
-  $("summary").textContent =
-    "Відібрано активних криптовалют: " +
-    symbols.length;
 }
 
-async function loadOneLevel(symbol,startTime,endTime) {
-  const url =
-    "/v5/market/kline?category=linear" +
-    "&symbol=" + encodeURIComponent(symbol) +
-    "&interval=15" +
-    "&start=" + startTime +
-    "&end=" + endTime +
-    "&limit=100";
+/* =========================
+   РІВНІ ПОПЕРЕДНЬОГО ДНЯ
+========================= */
 
-  const result = await getJSON(url);
-  const candles = result.list || [];
+async function loadLevelForSymbol(symbol,range){
+  const data = await apiGet(
+    "/v5/market/kline",
+    {
+      category:"linear",
+      symbol:symbol,
+      interval:"60",
+      start:String(range.start),
+      end:String(range.end),
+      limit:"30"
+    }
+  );
 
-  if (!candles.length) return null;
+  const candles = data.list || [];
 
   let high = -Infinity;
   let low = Infinity;
 
-  candles.forEach(c => {
-    const candleTime = Number(c[0]);
+  candles.forEach(candle=>{
+    const candleTime = Number(candle[0]);
+    const candleHigh = Number(candle[2]);
+    const candleLow = Number(candle[3]);
 
-    if (
-      candleTime >= startTime &&
-      candleTime < endTime
-    ) {
-      high = Math.max(high,Number(c[2]));
-      low = Math.min(low,Number(c[3]));
+    if(
+      candleTime >= range.start &&
+      candleTime < range.end &&
+      Number.isFinite(candleHigh) &&
+      Number.isFinite(candleLow)
+    ){
+      high = Math.max(high,candleHigh);
+      low = Math.min(low,candleLow);
     }
   });
 
-  if (
-    !Number.isFinite(high) ||
-    !Number.isFinite(low) ||
-    high <= 0 ||
-    low <= 0
-  ) {
-    return null;
+  if(
+    Number.isFinite(high) &&
+    Number.isFinite(low) &&
+    high>0 &&
+    low>0 &&
+    high>=low
+  ){
+    levels[symbol] = {high,low};
+    return true;
   }
 
-  return {high,low};
+  return false;
 }
 
-function updateProgress() {
-  const percent = symbols.length
-    ? Math.round(completed/symbols.length*100)
-    : 0;
+async function loadAllLevels(){
+  const range = getPragueYesterdayRange();
 
-  $("fill").style.width = percent + "%";
+  completed = 0;
+  failed = 0;
 
-  $("progressText").textContent =
-    "Рівнів оброблено: " + completed +
-    " із " + symbols.length +
-    " (" + percent + "%). Помилок: " + failed;
+  for(let i=0;i<symbols.length;i++){
+    if(!running) return;
 
-  $("summary").textContent =
-    "Криптовалют: " + symbols.length +
-    " · Рівнів готово: " + Object.keys(levels).length;
-}
+    const symbol = symbols[i];
 
-async function loadAllLevels() {
-  const today = pragueDate(new Date());
-  const todayStart = pragueMidnight(today);
-
-  const yesterday = pragueDate(
-    new Date(todayStart - 12*60*60*1000)
-  );
-
-  const startTime = pragueMidnight(yesterday);
-  const endTime = todayStart - 1;
-
-  setStatus(
-    "Завантажую рівні попереднього дня за часовим поясом Праги..."
-  );
-
-  $("progressText").textContent =
-    "Підготовка рівнів...";
-
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < symbols.length) {
-      const index = nextIndex++;
-      const symbol = symbols[index];
-
-      try {
-        const level = await loadOneLevel(
-          symbol,startTime,endTime
-        );
-
-        if (level) {
-          levels[symbol] = level;
-        }
-
-      } catch(error) {
-        failed++;
-        console.warn("Помилка рівня:", symbol, error);
-
-      }
-
-      completed++;
-
-      updateProgress();
-
-      await sleep(WORKER_DELAY);
-    }
-  }
-
-  const tasks = [];
-
-  for (let i=0; i<WORKERS; i++) {
-    tasks.push(worker());
-  }
-
-  await Promise.all(tasks);
-
-  if (!Object.keys(levels).length) {
-    throw new Error("Не вдалося завантажити жодного рівня");
-  }
-
-  $("progressText").textContent =
-    "Завантаження рівнів завершено: " +
-    Object.keys(levels).length +
-    " із " + symbols.length;
-}
-
-async function calculateTradeLevels(symbol,side,entry) {
-  const url =
-    "/v5/market/kline?category=linear" +
-    "&symbol=" + encodeURIComponent(symbol) +
-    "&interval=15&limit=100";
-
-  const result = await getJSON(url);
-
-  const candles = (result.list || [])
-    .slice()
-    .sort((a,b) => Number(a[0])-Number(b[0]));
-
-  const now = Date.now();
-
-  const closed = candles.filter(c =>
-    Number(c[0]) + 15*60*1000 <= now
-  );
-
-  const last24h = closed.filter(c =>
-    Number(c[0]) >= now - 24*60*60*1000
-  );
-
-  if (last24h.length < 10) return null;
-
-  const highs = [];
-  const lows = [];
-
-  for (let i=2; i<last24h.length-2; i++) {
-    const h = Number(last24h[i][2]);
-    const l = Number(last24h[i][3]);
-
-    const prevHighs = [
-      Number(last24h[i-2][2]),
-      Number(last24h[i-1][2])
-    ];
-
-    const nextHighs = [
-      Number(last24h[i+1][2]),
-      Number(last24h[i+2][2])
-    ];
-
-    const prevLows = [
-      Number(last24h[i-2][3]),
-      Number(last24h[i-1][3])
-    ];
-
-    const nextLows = [
-      Number(last24h[i+1][3]),
-      Number(last24h[i+2][3])
-    ];
-
-    if (
-      prevHighs.every(v => h > v) &&
-      nextHighs.every(v => h >= v)
-    ) {
-      highs.push(h);
+    try{
+      await loadLevelForSymbol(symbol,range);
+    }catch(error){
+      failed++;
+      console.warn("Рівні не завантажено:",symbol,error);
     }
 
-    if (
-      prevLows.every(v => l < v) &&
-      nextLows.every(v => l <= v)
-    ) {
-      lows.push(l);
-    }
-  }
+    completed++;
 
-  let target = 0;
-  let tp = 0;
-  let sl = 0;
+    const percent = symbols.length
+      ? completed/symbols.length*100
+      : 100;
 
-  if (side === "LONG") {
-    const candidates = highs
-      .filter(h => h > entry)
-      .sort((a,b) => a-b);
-
-    if (!candidates.length) return null;
-
-    target = candidates[0];
-    tp = target*(1-TP_OFFSET);
-
-    if (tp <= entry) return null;
-
-    const risk = (tp-entry)/SL_RATIO;
-    sl = entry-risk;
-
-  } else {
-    const candidates = lows
-      .filter(l => l < entry)
-      .sort((a,b) => b-a);
-
-    if (!candidates.length) return null;
-
-    target = candidates[0];
-    tp = target*(1+TP_OFFSET);
-
-    if (tp >= entry) return null;
-
-    const risk = (entry-tp)/SL_RATIO;
-    sl = entry+risk;
-  }
-
-  if (
-    ![entry,tp,sl,target].every(Number.isFinite) ||
-    entry <= 0 ||
-    tp <= 0 ||
-    sl <= 0 ||
-    target <= 0
-  ) {
-    return null;
-  }
-
-  return {entry,tp,sl,target};
-}
-
-function signalIsFresh(s) {
-  const timestamp = Number(s && s.candleTime);
-
-  return Number.isFinite(timestamp) &&
-    timestamp > 0 &&
-    Date.now()-timestamp <= MAX_SIGNAL_AGE_MS &&
-    Date.now() >= timestamp;
-}
-
-function validSignal(s) {
-  return s &&
-    typeof s.symbol === "string" &&
-    (s.side === "LONG" || s.side === "SHORT") &&
-    Number(s.price) > 0 &&
-    Number(s.tp) > 0 &&
-    Number(s.sl) > 0 &&
-    Number(s.target) > 0 &&
-    Number(s.profitPercent) >= MIN_PROFIT_PERCENT &&
-    signalIsFresh(s);
-}
-
-function hasRecentSignal(symbol,side) {
-  return signals.some(s =>
-    s.symbol === symbol &&
-    s.side === side &&
-    Date.now()-Number(s.candleTime) < MAX_SIGNAL_AGE_MS
-  );
-}
-
-async function createLiveSignal(symbol,side,entry) {
-  const key = symbol + "_" + side;
-
-  if (pendingSignals.has(key)) return;
-
-  const lastAttempt = lastSignalAttempts.get(key) || 0;
-
-  if (Date.now()-lastAttempt < 2*60*1000) {
-    return;
-  }
-
-  if (hasRecentSignal(symbol,side)) return;
-
-  pendingSignals.add(key);
-  lastSignalAttempts.set(key,Date.now());
-
-  try {
-    const trade = await calculateTradeLevels(
-      symbol,side,entry
+    setProgress(
+      percent,
+      "Рівні попереднього дня: " +
+      completed + " / " + symbols.length +
+      " · помилок: " + failed
     );
 
-    if (!trade) return;
-
-    const profitPercent = side === "LONG"
-      ? (trade.tp-entry)/entry*100
-      : (entry-trade.tp)/entry*100;
-
-    const riskPercent = Math.abs(
-      entry-trade.sl
-    )/entry*100;
-
-    if (
-      !Number.isFinite(profitPercent) ||
-      profitPercent < MIN_PROFIT_PERCENT
-    ) {
-      return;
+    if(completed%10===0){
+      $("coinCount").textContent =
+        Object.keys(levels).length;
     }
-
-    const now = Date.now();
-
-    const signal = {
-      symbol,
-      side,
-      price: entry,
-      target: trade.target,
-      tp: trade.tp,
-      sl: trade.sl,
-      profitPercent: profitPercent.toFixed(2),
-      riskPercent: riskPercent.toFixed(2),
-      candleTime: now,
-      time: new Date(now).toLocaleString("uk-UA", {
-        timeZone: "Europe/Prague"
-      })
-    };
-
-    signals.push(signal);
-    signals = signals.filter(validSignal);
-
-    saveSignals();
-    render();
-
-  } catch(error) {
-    console.warn("Signal error:",symbol,error);
-
-  } finally {
-    pendingSignals.delete(key);
   }
 }
 
-function handleLivePrice(symbol,previousPrice,currentPrice) {
+/* =========================
+   РОЗРАХУНОК СИГНАЛІВ
+========================= */
+
+function getPotentialPercent(from,to){
+  if(!from || !to || from<=0) return 0;
+
+  return Math.abs((to-from)/from)*100;
+}
+
+function getSignalForSymbol(symbol){
+  const price = prices[symbol];
   const level = levels[symbol];
 
-  if (!level) return;
+  if(!price || !level) return null;
 
-  if (
-    !Number.isFinite(previousPrice) ||
-    !Number.isFinite(currentPrice) ||
-    previousPrice <= 0 ||
-    currentPrice <= 0
-  ) {
+  const distanceHigh =
+    getPotentialPercent(price,level.high);
+
+  const distanceLow =
+    getPotentialPercent(price,level.low);
+
+  // LONG: ціна біля мінімуму попереднього дня.
+  if(
+    price >= level.low &&
+    price <= level.low*(1+NEAR_LEVEL_PERCENT/100)
+  ){
+    const potential = getPotentialPercent(
+      price,
+      level.high
+    );
+
+    if(potential>=MIN_PROFIT_PERCENT){
+      return {
+        symbol,
+        side:"LONG",
+        entry:price,
+        target:level.high,
+        stop:level.low*0.995,
+        potential,
+        level:level.low,
+        distance:distanceLow
+      };
+    }
+  }
+
+  // SHORT: ціна біля максимуму попереднього дня.
+  if(
+    price <= level.high &&
+    price >= level.high*(1-NEAR_LEVEL_PERCENT/100)
+  ){
+    const potential = getPotentialPercent(
+      price,
+      level.low
+    );
+
+    if(potential>=MIN_PROFIT_PERCENT){
+      return {
+        symbol,
+        side:"SHORT",
+        entry:price,
+        target:level.low,
+        stop:level.high*1.005,
+        potential,
+        level:level.high,
+        distance:distanceHigh
+      };
+    }
+  }
+
+  return null;
+}
+
+function validSignal(signal){
+  return Boolean(
+    signal &&
+    signal.symbol &&
+    (signal.side==="LONG" || signal.side==="SHORT") &&
+    Number.isFinite(Number(signal.entry)) &&
+    Number.isFinite(Number(signal.target)) &&
+    Number.isFinite(Number(signal.potential)) &&
+    Number(signal.potential)>=MIN_PROFIT_PERCENT
+  );
+}
+
+function updateSignal(symbol){
+  const candidate = getSignalForSymbol(symbol);
+
+  const index = signals.findIndex(
+    item=>item.symbol===symbol
+  );
+
+  if(candidate){
+    candidate.updatedAt = Date.now();
+
+    if(index>=0){
+      signals[index] = candidate;
+    }else{
+      signals.unshift(candidate);
+    }
+  }else if(index>=0){
+    signals.splice(index,1);
+  }
+
+  saveSignals();
+}
+
+function handleLivePrice(symbol,oldPrice,newPrice){
+  updateSignal(symbol);
+}
+
+/* =========================
+   ЗБЕРЕЖЕННЯ
+========================= */
+
+function saveSignals(){
+  try{
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(signals.slice(0,100))
+    );
+  }catch(error){
+    console.warn("Не вдалося зберегти сигнали",error);
+  }
+}
+
+function loadSavedSignals(){
+  try{
+    const saved = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || "[]"
+    );
+
+    signals = Array.isArray(saved)
+      ? saved.filter(validSignal)
+      : [];
+
+  }catch(error){
+    signals = [];
+  }
+}
+
+/* =========================
+   ВІДОБРАЖЕННЯ
+========================= */
+
+function renderSignals(){
+  const box = $("signals");
+
+  $("signalCount").textContent = signals.length;
+
+  if(!signals.length){
+    box.innerHTML =
+      "<div class='info'>Актуальних сигналів із потенціалом від 0,5% поки немає.</div>";
     return;
   }
 
-  const longTrigger = level.high*1.001;
-  const shortTrigger = level.low*0.999;
+  box.innerHTML = signals
+    .slice(0,50)
+    .map(signal=>{
+      const cls = signal.side==="LONG"
+        ? "long"
+        : "short";
 
-  if (
-    previousPrice <= longTrigger &&
-    currentPrice > longTrigger
-  ) {
-    createLiveSignal(symbol,"LONG",currentPrice);
-  }
+      return `
+        <div class="signal">
+          <div class="signal-head">
+            <span class="coin">${signal.symbol}</span>
+            <span class="badge ${cls}">
+              ${signal.side}
+            </span>
+          </div>
 
-  if (
-    previousPrice >= shortTrigger &&
-    currentPrice < shortTrigger
-  ) {
-    createLiveSignal(symbol,"SHORT",currentPrice);
-  }
+          <div class="details">
+            Вхід: ${formatPrice(signal.entry)}<br>
+            Ціль: ${formatPrice(signal.target)}<br>
+            Стоп-рівень: ${formatPrice(signal.stop)}<br>
+            Потенціал до цілі: 
+            <span class="${cls}">
+              ${formatPercent(signal.potential)}
+            </span><br>
+            Рівень попереднього дня:
+            ${formatPrice(signal.level)}
+          </div>
+        </div>
+      `;
+    }).join("");
 }
 
-function saveSignals() {
-  try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(signals)
-    );
-  } catch(error) {
-    console.warn("Storage error:",error);
-  }
-}
+function renderNearLevels(){
+  const box = $("nearLevels");
+  const list = [];
 
-function render() {
-  signals = signals.filter(validSignal);
+  symbols.forEach(symbol=>{
+    const price = prices[symbol];
+    const level = levels[symbol];
 
-  $("signals").innerHTML = signals.length
-    ? signals.slice(-30).reverse().map(s => `
-      <div class="card">
-        <b class="${s.side==="LONG"?"green":"red"}">
-          ${s.side} — ${s.symbol}
-        </b><br>
+    if(!price || !level) return;
 
-        Ціна входу: ${formatPrice(s.symbol,s.price)}<br>
+    const highDistance =
+      getPotentialPercent(price,level.high);
 
-        Локальний рівень: ${formatPrice(s.symbol,s.target)}<br>
+    const lowDistance =
+      getPotentialPercent(price,level.low);
 
-        <span class="green">
-          Take Profit: ${formatPrice(s.symbol,s.tp)}
-        </span><br>
-
-        <span class="red">
-          Stop Loss: ${formatPrice(s.symbol,s.sl)}
-        </span><br>
-
-        Потенційний прибуток: ${s.profitPercent}%<br>
-
-        Потенційний ризик: ${s.riskPercent}%<br>
-
-        Співвідношення прибуток/ризик: 3:1<br>
-
-        <span class="small">${s.time || ""}</span>
-      </div>
-    `).join("")
-    : "<div class='info'>Актуальних сигналів із потенційним рухом від 0.5% поки немає.</div>";
-
-  saveSignals();
-
-  const near = symbols
-    .filter(s => levels[s] && prices[s] > 0)
-    .map(s => {
-      const price = prices[s];
-      const level = levels[s];
-
-      const dh = (level.high-price)/price*100;
-      const dl = (price-level.low)/price*100;
-
-      return {
-        symbol:s,
+    if(highDistance<=NEAR_LEVEL_PERCENT){
+      list.push({
+        symbol,
+        type:"Біля максимуму",
+        distance:highDistance,
         price,
-        level,
-        dh,
-        dl,
-        dist:Math.min(Math.abs(dh),Math.abs(dl))
-      };
-    })
-    .filter(x => x.dist <= 1)
-    .sort((a,b) => a.dist-b.dist)
-    .slice(0,50);
+        level:level.high
+      });
+    }
 
-  $("coins").innerHTML = near.length
-    ? near.map(x => `
-      <div class="card">
-        <b>${x.symbol}</b><br>
+    if(lowDistance<=NEAR_LEVEL_PERCENT){
+      list.push({
+        symbol,
+        type:"Біля мінімуму",
+        distance:lowDistance,
+        price,
+        level:level.low
+      });
+    }
+  });
 
-        Ціна: ${formatPrice(x.symbol,x.price)}<br>
+  list.sort((a,b)=>a.distance-b.distance);
 
-        Максимум попереднього дня:
-        ${formatPrice(x.symbol,x.level.high)}
-        · ${x.dh.toFixed(2)}%<br>
+  if(!list.length){
+    box.innerHTML =
+      "<div class='info'>Зараз монет біля рівнів не знайдено.</div>";
+    return;
+  }
 
-        Мінімум попереднього дня:
-        ${formatPrice(x.symbol,x.level.low)}
-        · ${x.dl.toFixed(2)}%
+  box.innerHTML = list
+    .slice(0,MAX_NEAR_ITEMS)
+    .map(item=>`
+      <div class="signal">
+        <div class="signal-head">
+          <span class="coin">${item.symbol}</span>
+          <span class="badge">
+            ${item.type}
+          </span>
+        </div>
+
+        <div class="details">
+          Ціна: ${formatPrice(item.price)}<br>
+          Рівень: ${formatPrice(item.level)}<br>
+          Відстань: ${formatPercent(item.distance)}
+        </div>
       </div>
-    `).join("")
-    : "<div class='info'>Монет біля рівнів зараз немає.</div>";
+    `).join("");
 }
 
-function scheduleRender() {
-  if (renderTimer) return;
+function render(){
+  renderSignals();
+  renderNearLevels();
 
-  renderTimer = setTimeout(() => {
+  $("coinCount").textContent =
+    Object.keys(levels).length;
+
+  $("lastUpdate").textContent = nowPrague();
+}
+
+function scheduleRender(){
+  if(renderTimer) return;
+
+  renderTimer = setTimeout(()=>{
     renderTimer = null;
     render();
-  },1000);
+  },500);
 }
 
-function connectWebSocket() {
-  if (
+/* =========================
+   WEBSOCKET BYBIT
+========================= */
+
+function scheduleReconnect(){
+  clearTimeout(reconnectTimer);
+
+  $("wsStatus").textContent = "RECONNECT";
+
+  setStatus(
+    "З'єднання втрачено. Повторне підключення..."
+  );
+
+  reconnectTimer = setTimeout(()=>{
+    connectWebSocket();
+  },reconnectDelay);
+
+  reconnectDelay = Math.min(
+    reconnectDelay*2,
+    30000
+  );
+}
+
+function stopWebSocket(){
+  clearTimeout(reconnectTimer);
+  clearInterval(pingTimer);
+
+  if(tickerSocket){
+    tickerSocket.onopen = null;
+    tickerSocket.onmessage = null;
+    tickerSocket.onerror = null;
+    tickerSocket.onclose = null;
+
+    try{
+      tickerSocket.close();
+    }catch(error){}
+  }
+
+  tickerSocket = null;
+  $("wsStatus").textContent = "OFF";
+}
+
+function connectWebSocket(){
+  if(
     tickerSocket &&
     (
-      tickerSocket.readyState === WebSocket.OPEN ||
-      tickerSocket.readyState === WebSocket.CONNECTING
+      tickerSocket.readyState===WebSocket.OPEN ||
+      tickerSocket.readyState===WebSocket.CONNECTING
     )
-  ) {
+  ){
     return;
   }
 
   clearTimeout(reconnectTimer);
   clearInterval(pingTimer);
 
-  setStatus("Підключення до потоку цін Bybit...");
-
   wsBaseline = new Set();
 
-  try {
-    tickerSocket = new WebSocket(WS_URL);
+  setStatus("Підключення до потоку цін Bybit...");
+  $("wsStatus").textContent = "CONNECTING";
 
-  } catch(error) {
+  let socket;
+
+  try{
+    socket = new WebSocket(WS_URL);
+    tickerSocket = socket;
+  }catch(error){
     scheduleReconnect();
     return;
   }
 
-  tickerSocket.onopen = () => {
+  socket.onopen = ()=>{
+    if(tickerSocket!==socket) return;
+
     reconnectDelay = 2000;
 
-    setStatus("WebSocket підключено. Підписуюсь на ціни...");
+    $("wsStatus").textContent = "ON";
 
-    pingTimer = setInterval(() => {
-      if (
-        tickerSocket &&
-        tickerSocket.readyState === WebSocket.OPEN
-      ) {
-        tickerSocket.send(JSON.stringify({
-          op:"ping"
-        }));
+    setStatus(
+      "WebSocket підключено. Підписуюсь на ціни..."
+    );
+
+    pingTimer = setInterval(()=>{
+      if(socket.readyState===WebSocket.OPEN){
+        socket.send(JSON.stringify({op:"ping"}));
       }
     },20000);
 
-    const topics = symbols.map(s => "tickers."+s);
+    const topics = symbols.map(
+      symbol=>"tickers."+symbol
+    );
 
-    for (let i=0; i<topics.length; i+=50) {
-      const batch = topics.slice(i,i+50);
+    // Підписуємося невеликими пакетами.
+    for(let i=0;i<topics.length;i+=10){
+      const batch = topics.slice(i,i+10);
 
-      setTimeout(() => {
-        if (
-          tickerSocket &&
-          tickerSocket.ready
+      setTimeout(()=>{
+        if(
+          tickerSocket===socket &&
+          socket.readyState===WebSocket.OPEN
+        ){
+          socket.send(JSON.stringify({
+            op:"subscribe",
+            args:batch
+          }));
+        }
+      },Math.floor(i/10)*150);
+    }
+  };
+
+  socket.onmessage = event=>{
+    if(tickerSocket!==socket) return;
+
+    try{
+      const message = JSON.parse(event.data);
+
+      if(
+        !message.topic ||
+        !message.topic.startsWith("tickers.")
+      ){
+        return;
+      }
+
+      const symbol = message.topic.replace(
+        "tickers.",
+        ""
+      );
+
+      const items = Array.isArray(message.data)
+        ? message.data
+        : [message.data];
+
+      items.forEach(item=>{
+        if(!item || !item.lastPrice) return;
+
+        const currentPrice = Number(item.lastPrice);
+
+        if(
+          !Number.isFinite(currentPrice) ||
+          currentPrice<=0
+        ){
+          return;
+        }
+
+        const previousPrice = prices[symbol];
+
+        prices[symbol] = currentPrice;
+
+        if(
+          wsBaseline.has(symbol) &&
+          Number.isFinite(previousPrice)
+        ){
+          handleLivePrice(
+            symbol,
+            previousPrice,
+            currentPrice
+          );
+        }
+
+        wsBaseline.add(symbol);
+      });
+
+      if(wsBaseline.size>0){
+        setStatus(
+          "REAL-TIME активний · отримую ціни Bybit"
+        );
+      }
+
+      scheduleRender();
+
+    }catch(error){
+      console.warn(
+        "Помилка повідомлення WebSocket:",
+        error
+      );
+    }
+  };
+
+  socket.onerror = ()=>{
+    if(tickerSocket===socket){
+      socket.close();
+    }
+  };
+
+  socket.onclose = ()=>{
+    if(tickerSocket!==socket) return;
+
+    tickerSocket = null;
+    clearInterval(pingTimer);
+
+    scheduleReconnect();
+  };
+}
+
+/* =========================
+   ЗАПУСК СКАНЕРА
+========================= */
+
+async function startScanner(){
+  if(running) return;
+
+  running = true;
+
+  const button = $("reloadButton");
+
+  button.disabled = true;
+  button.textContent = "Запуск сканера...";
+
+  stopWebSocket();
+
+  symbols = [];
+  prices = {};
+  levels = {};
+  completed = 0;
+  failed = 0;
+
+  $("fill").style.width = "0%";
+  $("progressText").textContent = "Підготовка...";
+
+  loadSavedSignals();
+  render();
+
+  try{
+    setStatus("Завантажую список USDT Perpetual...");
+
+    symbols = await loadSymbols();
+
+    if(!symbols.length){
+      throw new Error(
+        "Bybit не повернув список торгових пар."
+      );
+    }
+
+    $("coinCount").textContent = symbols.length;
+
+    setStatus(
+      "Завантажую поточні ціни..."
+    );
+
+    await loadTickers();
+
+    setStatus(
+      "Завантажую рівні попереднього дня..."
+    );
+
+    await loadAllLevels();
+
+    if(!running) return;
+
+    render();
+
+    setStatus(
+      "Рівні завантажено. Запускаю REAL-TIME..."
+    );
+
+    connectWebSocket();
+
+  }catch(error){
+    console.error("Помилка запуску:",error);
+
+    setStatus(
+      "Помилка: " + error.message
+    );
+
+    $("signals").innerHTML =
+      "<div class='info error'>" +
+      "Не вдалося запустити сканер. Перевір з'єднання та відкрий консоль браузера для деталей." +
+      "</div>";
+
+  }finally{
+    running = false;
+    button.disabled = false;
+    button.textContent = "Перезапустити сканер";
+  }
+}
+
+/* =========================
+   ОБРОБНИКИ
+========================= */
+
+$("reloadButton").addEventListener(
+  "click",
+  startScanner
+);
+
+window.addEventListener(
+  "unhandledrejection",
+  event=>{
+    console.error(
+      "Помилка JavaScript:",
+      event.reason
+    );
+  }
+);
+
+window.addEventListener(
+  "online",
+  ()=>{
+    if(!tickerSocket){
+      connectWebSocket();
+    }
+  }
+);
+
+/* =========================
+   СТАРТ
+========================= */
+
+startScanner();
+
+</script>
+</body>
+</html>
