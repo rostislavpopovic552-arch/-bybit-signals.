@@ -37,7 +37,6 @@ th{color:#9eacc3}
 <main>
   <h1>ПРИХОВАНИЙ РОЗВОРОТ PRO</h1>
   <p>Bybit USDT Perpetual · Sweep → BOS → Retest · Paper Trading</p>
-
   <section class="panel">
     <h2>Стан сканера</h2>
     <div id="status" role="status" aria-live="polite">Готовий до запуску.</div>
@@ -48,7 +47,6 @@ th{color:#9eacc3}
       <div class="metric"><small>Закриті угоди</small><strong id="closedCount">0</strong></div>
     </div>
   </section>
-
   <section class="panel">
     <h2>Налаштування ризику</h2>
     <div class="grid">
@@ -70,25 +68,23 @@ th{color:#9eacc3}
       <button class="stop" id="stopBtn">■ Зупинити</button>
       <button class="reset" id="resetBtn">Скинути журнал</button>
     </div>
-    <p id="riskStatus" class="note">Угод сьогодні: 0. Збитків поспіль: 0.</p>
+    <p id="riskStatus" class="note">Кількість угод і стопів не обмежена.</p>
   </section>
-
   <section class="panel">
     <h2>Поточні сигнали</h2>
     <div class="table-wrap" id="signals">Актуальних сигналів поки немає.</div>
   </section>
-
   <section class="panel">
     <h2>Віртуальні угоди</h2>
     <div class="table-wrap" id="trades">Угод ще немає.</div>
   </section>
-
   <section class="panel">
     <h2>Правила та обмеження</h2>
     <p class="note">
       Сканер використовує спрощену модель Sweep → BOS → Retest на M5.
-      Максимальний ризик — 0,5% депозиту на угоду. Максимум 3 нові угоди
-      на день. Після 2 збитків поспіль нові угоди блокуються до наступного дня.
+      Максимальний ризик — 0,5% депозиту на угоду.
+      Денна кількість угод не обмежена. Кількість збитків також не обмежена:
+      сканер продовжує пошук нових сигналів після стопів.
     </p>
     <p class="note warning">
       Це експериментальний paper trading, а не перевірена прибуткова стратегія.
@@ -99,35 +95,26 @@ th{color:#9eacc3}
     </p>
   </section>
 </main>
-
 <script>
 "use strict";
-
 const API = "https://api.bybit.com";
 const $ = id => document.getElementById(id);
-const MAX_DAILY_TRADES = Infinity;
 const SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
-const MAX_DAILY_LOSSES = 2;
 const MAX_RISK_PERCENT = 0.5;
 const SCAN_BATCH_SIZE = 8;
-
 let running = false;
 let busy = false;
 let timer = null;
-
 let symbols = [];
 let signals = [];
 let trades = [];
 let processed = new Set();
-
 let dayKey = "";
 let dailyTrades = 0;
 let losses = 0;
-
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
-
 function readStorage(key, fallback) {
   try {
     const value = localStorage.getItem(key);
@@ -137,7 +124,6 @@ function readStorage(key, fallback) {
     return fallback;
   }
 }
-
 function pragueDay(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Prague",
@@ -145,12 +131,10 @@ function pragueDay(date = new Date()) {
     month: "2-digit",
     day: "2-digit"
   }).formatToParts(date);
-
   const v = {};
   parts.forEach(p => v[p.type] = p.value);
   return `${v.year}-${v.month}-${v.day}`;
 }
-
 function countTodayLosses() {
   const closed = trades
     .filter(t =>
@@ -159,7 +143,6 @@ function countTodayLosses() {
       pragueDay(new Date(t.closed)) === dayKey
     )
     .sort((a, b) => Number(b.closed) - Number(a.closed));
-
   let count = 0;
   for (const t of closed) {
     if (Number(t.realized) < 0) count++;
@@ -167,7 +150,6 @@ function countTodayLosses() {
   }
   return count;
 }
-
 function save() {
   try {
     localStorage.setItem("paperTrades", JSON.stringify(trades));
@@ -181,23 +163,18 @@ function save() {
     console.error("Не вдалося зберегти журнал:", e);
   }
 }
-
 function loadState() {
   const loadedTrades = readStorage("paperTrades", []);
   const loadedState = readStorage("paperState", {});
-
   trades = Array.isArray(loadedTrades)
     ? loadedTrades.filter(t => t && typeof t === "object")
     : [];
-
   processed = new Set(
     Array.isArray(loadedState.processed)
       ? loadedState.processed
       : []
   );
-
   dayKey = pragueDay();
-
   const seen = new Set();
   trades = trades.filter(t => {
     const key = t.id || `${t.symbol}-${t.side}-${t.opened}-${t.entry}`;
@@ -205,22 +182,17 @@ function loadState() {
     seen.add(key);
     return true;
   });
-
   trades.forEach(t => {
     if (t.id) processed.add(t.id);
   });
-
   dailyTrades = trades.filter(t =>
     t.opened && pragueDay(new Date(t.opened)) === dayKey
   ).length;
-
   losses = countTodayLosses();
   save();
 }
-
 function resetDay() {
   const today = pragueDay();
-
   if (today !== dayKey) {
     dayKey = today;
     dailyTrades = trades.filter(t =>
@@ -230,50 +202,40 @@ function resetDay() {
     save();
   }
 }
-
 async function api(path, attempt = 0) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
-
   let response;
-
   try {
     response = await fetch(API + path, {
       signal: controller.signal
     });
   } catch (e) {
     clearTimeout(timeout);
-
     if (attempt < 2) {
       await delay(1000 * (attempt + 1));
       return api(path, attempt + 1);
     }
-
     throw new Error(
       e.name === "AbortError"
         ? "Час очікування Bybit вичерпано."
         : "Немає з'єднання з Bybit. Перевір інтернет або доступ API."
     );
   }
-
   clearTimeout(timeout);
-
   if (response.status === 429 && attempt < 3) {
     await delay(1500 * (attempt + 1));
     return api(path, attempt + 1);
   }
-
   if (!response.ok) {
     throw new Error("Помилка Bybit HTTP: " + response.status);
   }
-
   let json;
   try {
     json = await response.json();
   } catch (e) {
     throw new Error("Bybit повернув некоректну відповідь.");
   }
-
   if (json.retCode !== 0) {
     if (json.retCode === 10006 && attempt < 3) {
       await delay(1500 * (attempt + 1));
@@ -281,26 +243,19 @@ async function api(path, attempt = 0) {
     }
     throw new Error(json.retMsg || "Помилка API Bybit.");
   }
-
   return json.result;
 }
-
 async function loadSymbols() {
   let cursor = "";
   const all = new Set();
-
   for (let page = 0; page < 10; page++) {
     let path =
       "/v5/market/instruments-info?category=linear&limit=1000&settleCoin=USDT";
-
     if (cursor) {
       path += "&cursor=" + encodeURIComponent(cursor);
     }
-
     const result = await api(path);
-
     if (!result || !Array.isArray(result.list)) break;
-
     for (const item of result.list) {
       if (
         item.status === "Trading" &&
@@ -311,37 +266,28 @@ async function loadSymbols() {
         all.add(item.symbol);
       }
     }
-
     cursor = result.nextPageCursor || "";
     if (!cursor) break;
   }
-
   if (!all.size) {
     throw new Error("Не вдалося завантажити USDT perpetual-пари.");
   }
-
   return [...all];
 }
-
 async function tickerMap() {
   const result = await api("/v5/market/tickers?category=linear");
-
   if (!result || !Array.isArray(result.list)) {
     throw new Error("Bybit не повернув список цін.");
   }
-
   return Object.fromEntries(result.list.map(x => [x.symbol, x]));
 }
-
 async function candles(symbol) {
   const result = await api(
     "/v5/market/kline?category=linear&symbol=" +
     encodeURIComponent(symbol) +
     "&interval=5&limit=60"
   );
-
   if (!result || !Array.isArray(result.list)) return [];
-
   return result.list.map(x => ({
     time: Number(x[0]),
     open: Number(x[1]),
@@ -356,16 +302,13 @@ async function candles(symbol) {
     Number.isFinite(x.close)
   );
 }
-
 function setupIsFresh(setup) {
   const closeTime = Number(setup.time) + 5 * 60 * 1000;
   const age = Date.now() - closeTime;
-
   return Number.isFinite(closeTime) &&
     age >= 0 &&
     age <= SIGNAL_MAX_AGE_MS;
 }
-
 function signalId(symbol, setup) {
   return [
     symbol,
@@ -374,10 +317,8 @@ function signalId(symbol, setup) {
     Number(setup.level).toFixed(10)
   ].join("-");
 }
-
 function signalWasUsed(symbol, setup) {
   const id = signalId(symbol, setup);
-
   return processed.has(id) || trades.some(t =>
     t.id === id ||
     (
@@ -387,25 +328,18 @@ function signalWasUsed(symbol, setup) {
     )
   );
 }
-
 /*
   Спрощена модель Sweep → BOS → Retest.
-  Це не повна реалізація всіх правил стратегії користувача:
-  попередній денний максимум/мінімум і H1/M15-фільтри
+  Попередній денний максимум/мінімум і H1/M15-фільтри
   тут ще не використовуються.
 */
 function findSetup(candleList) {
   const a = candleList.slice(0, -1);
-
   if (a.length < 20) return null;
-
   const last = a.length - 1;
   const retest = a[last];
-
   const age = Date.now() - (retest.time + 5 * 60 * 1000);
-
   if (age < 0 || age > SIGNAL_MAX_AGE_MS) return null;
-
   for (
     let i = last - 2;
     i >= Math.max(10, last - 10);
@@ -413,22 +347,18 @@ function findSetup(candleList) {
   ) {
     const previous = a.slice(i - 10, i);
     if (previous.length !== 10) continue;
-
     const support = Math.min(...previous.map(x => x.low));
     const resistance = Math.max(...previous.map(x => x.high));
     const sweep = a[i];
-
     if (sweep.low < support && sweep.close > support) {
       const level = resistance;
       let bos = false;
-
       for (let j = i + 1; j < last; j++) {
         if (a[j].close > level) {
           bos = true;
           break;
         }
       }
-
       if (
         bos &&
         retest.low <= level * 1.002 &&
@@ -446,18 +376,15 @@ function findSetup(candleList) {
         };
       }
     }
-
     if (sweep.high > resistance && sweep.close < resistance) {
       const level = support;
       let bos = false;
-
       for (let j = i + 1; j < last; j++) {
         if (a[j].close < level) {
           bos = true;
           break;
         }
       }
-
       if (
         bos &&
         retest.high >= level * 0.998 &&
@@ -476,63 +403,46 @@ function findSetup(candleList) {
       }
     }
   }
-
   return null;
 }
-
 function fmt(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-
   return n.toLocaleString("en-US", {
     maximumFractionDigits: 8
   });
 }
-
 function openPaper(symbol, setup, price) {
   resetDay();
-
   if (!setupIsFresh(setup)) return false;
   if (signalWasUsed(symbol, setup)) return false;
-  if (losses >= MAX_DAILY_LOSSES) return false;
-  if (dailyTrades >= MAX_DAILY_TRADES) return false;
-
+  // Денний ліміт угод і ліміт збитків вимкнені.
   if (trades.some(t =>
     t.symbol === symbol && t.status === "OPEN"
   )) return false;
-
   price = Number(price);
   const level = Number(setup.level);
   const sl = Number(setup.sl);
-
   if (
     !Number.isFinite(price) || price <= 0 ||
     !Number.isFinite(level) ||
     !Number.isFinite(sl)
   ) return false;
-
   const distance = Math.abs(price - sl);
-
   if (distance <= 0 || distance / price > 0.025) return false;
-
   if (setup.side === "LONG" && (price <= level || price <= sl)) {
     return false;
   }
-
   if (setup.side === "SHORT" && (price >= level || price >= sl)) {
     return false;
   }
-
   if (Math.abs(price - level) / price > 0.003) return false;
-
   if (
     setup.retestClose &&
     Math.abs(price - setup.retestClose) / price > 0.005
   ) return false;
-
   const deposit = Math.max(1, Number($("deposit").value) || 1000);
   const riskInput = Number($("risk").value);
-
   const risk = Math.min(
     MAX_RISK_PERCENT,
     Math.max(
@@ -542,15 +452,11 @@ function openPaper(symbol, setup, price) {
         : MAX_RISK_PERCENT
     )
   );
-
   const riskMoney = deposit * risk / 100;
   const qty = riskMoney / distance;
-
   if (!Number.isFinite(qty) || qty <= 0) return false;
-
   const direction = setup.side === "LONG" ? 1 : -1;
   const id = signalId(symbol, setup);
-
   trades.unshift({
     id,
     symbol,
@@ -571,91 +477,68 @@ function openPaper(symbol, setup, price) {
     hit1: false,
     hit2: false
   });
-
   processed.add(id);
   dailyTrades++;
   save();
   return true;
 }
-
 function closeQty(t, price, qty) {
   const q = Math.min(t.qty, qty);
-
   if (!Number.isFinite(q) || q <= 0) return;
-
   const direction = t.side === "LONG" ? 1 : -1;
-
   t.realized += (price - t.entry) * direction * q;
   t.qty -= q;
-
   if (t.qty < t.initialQty * 0.000001) {
     t.qty = 0;
   }
 }
-
 function finish(t, price) {
   if (t.status !== "OPEN") return;
-
   if (t.qty > 0) closeQty(t, price, t.qty);
-
   t.status = "CLOSED";
   t.closed = Date.now();
   losses = countTodayLosses();
   save();
 }
-
 function updateTrades(prices) {
   resetDay();
-
   for (const t of trades) {
     if (t.status !== "OPEN") continue;
-
     const price = Number(prices[t.symbol]);
     if (!Number.isFinite(price) || price <= 0) continue;
-
     const third = t.initialQty / 3;
-
     if (t.side === "LONG") {
       if (price <= t.sl) {
         finish(t, t.sl);
         continue;
       }
-
       if (!t.hit1 && price >= t.tp1) {
         closeQty(t, t.tp1, third);
         t.hit1 = true;
       }
-
       if (!t.hit2 && price >= t.tp2) {
         closeQty(t, t.tp2, third);
         t.hit2 = true;
       }
-
       if (price >= t.tp3) finish(t, t.tp3);
-
     } else {
       if (price >= t.sl) {
         finish(t, t.sl);
         continue;
       }
-
       if (!t.hit1 && price <= t.tp1) {
         closeQty(t, t.tp1, third);
         t.hit1 = true;
       }
-
       if (!t.hit2 && price <= t.tp2) {
         closeQty(t, t.tp2, third);
         t.hit2 = true;
       }
-
       if (price <= t.tp3) finish(t, t.tp3);
     }
   }
-
   save();
 }
-
 function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, c => ({
     "&": "&amp;",
@@ -665,7 +548,6 @@ function escapeHTML(value) {
     "'": "&#39;"
   })[c]);
 }
-
 function render() {
   $("pairs").textContent = symbols.length;
   $("signalCount").textContent = signals.length;
@@ -673,7 +555,6 @@ function render() {
     trades.filter(t => t.status === "OPEN").length;
   $("closedCount").textContent =
     trades.filter(t => t.status === "CLOSED").length;
-
   $("signals").innerHTML = signals.length
     ? `<table>
         <thead><tr>
@@ -692,9 +573,7 @@ function render() {
         </tbody>
       </table>`
     : "Актуальних сигналів поки немає.";
-
   const recent = trades.slice(0, 30);
-
   $("trades").innerHTML = recent.length
     ? `<table>
         <thead><tr>
@@ -717,59 +596,41 @@ function render() {
         </tbody>
       </table>`
     : "Угод ще немає.";
-
   $("riskStatus").textContent =
     "Угод сьогодні: " + dailyTrades +
     ". Збитків поспіль: " + losses +
-    ". " +
-    (losses >= MAX_DAILY_LOSSES
-      ? "Нові угоди заблоковано до наступного дня."
-      : "Денний ліміт активний.");
+    ". Кількість угод і стопів не обмежена.";
 }
-
 async function scan() {
   if (busy || !running) return;
-
   busy = true;
   $("status").textContent = "● Сканування ринку...";
-
   try {
     resetDay();
-
     if (!symbols.length) {
       $("status").textContent = "Завантаження списку торгових пар...";
       symbols = await loadSymbols();
       render();
     }
-
     if (!running) return;
-
     const tickers = await tickerMap();
-
     const ranked = symbols
       .filter(s => tickers[s])
       .sort((a, b) =>
         Number(tickers[b].turnover24h || 0) -
         Number(tickers[a].turnover24h || 0)
       );
-
     const prices = {};
-
     for (const t of trades) {
       if (t.status === "OPEN" && tickers[t.symbol]) {
         prices[t.symbol] = Number(tickers[t.symbol].lastPrice);
       }
     }
-
     updateTrades(prices);
-
     const found = [];
-
     for (let i = 0; i < ranked.length; i += SCAN_BATCH_SIZE) {
       if (!running) break;
-
       const batch = ranked.slice(i, i + SCAN_BATCH_SIZE);
-
       const results = await Promise.all(
         batch.map(async symbol => {
           try {
@@ -782,27 +643,19 @@ async function scan() {
           }
         })
       );
-
       found.push(...results.filter(Boolean));
-
       $("status").textContent =
         "● Перевірено " + Math.min(i + SCAN_BATCH_SIZE, ranked.length) +
         " із " + ranked.length + " пар...";
-      
       await delay(120);
     }
-
     if (!running) return;
-
     signals = [];
-
     for (const item of found) {
       const price = Number(tickers[item.symbol]?.lastPrice);
-
       if (!Number.isFinite(price) || price <= 0) continue;
       if (!setupIsFresh(item)) continue;
       if (signalWasUsed(item.symbol, item)) continue;
-
       signals.push({
         symbol: item.symbol,
         side: item.side,
@@ -811,18 +664,14 @@ async function scan() {
         level: item.level,
         reason: item.reason
       });
-
       openPaper(item.symbol, item, price);
     }
-
     render();
-
     $("status").textContent =
       "● Сканування завершено. Перевірено пар: " +
       ranked.length +
       ". Нових сигналів: " +
       signals.length;
-
   } catch (e) {
     console.error("Помилка сканера:", e);
     $("status").textContent = "Помилка: " + (e.message || "Невідома помилка");
@@ -831,72 +680,53 @@ async function scan() {
     render();
   }
 }
-
 function startScanner() {
   if (running) return;
-
   running = true;
   $("status").textContent = "● Запуск сканера...";
-
   scan();
-
   const seconds = Number($("interval").value) || 60;
   const intervalMs = Math.max(15000, Math.min(3600000, seconds * 1000));
-
   timer = setInterval(scan, intervalMs);
 }
-
 function stopScanner() {
   running = false;
-
   if (timer) {
     clearInterval(timer);
     timer = null;
   }
-
   $("status").textContent = "Сканер зупинено.";
 }
-
 function resetJournal() {
   if (!confirm("Очистити всі віртуальні угоди та журнал?")) return;
-
   stopScanner();
-
   trades = [];
   signals = [];
   processed.clear();
   dailyTrades = 0;
   losses = 0;
   dayKey = pragueDay();
-
   save();
   render();
-
   $("status").textContent = "Журнал очищено.";
 }
-
 function init() {
   try {
     loadState();
     render();
-
     $("startBtn").addEventListener("click", startScanner);
     $("stopBtn").addEventListener("click", stopScanner);
     $("resetBtn").addEventListener("click", resetJournal);
-
     $("status").textContent = "Готовий до запуску. Віртуальна торгівля.";
     console.log("ПРИХОВАНИЙ РОЗВОРОТ PRO завантажено.");
-
   } catch (e) {
     console.error("Помилка запуску:", e);
     $("status").textContent = "Помилка запуску: " + e.message;
   }
 }
-
 window.startScanner = startScanner;
 window.stopScanner = stopScanner;
 window.scan = scan;
-
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {
