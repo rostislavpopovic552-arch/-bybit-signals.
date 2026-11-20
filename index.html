@@ -14,7 +14,7 @@ button{border:0;border-radius:8px;padding:12px 15px;font-weight:bold;cursor:poin
 .summary-value{font-size:21px;font-weight:bold}.small{font-size:11px;color:#9eacc3}hr{border:0;border-top:1px solid #34445e;margin:12px 0}
 </style></head><body><main>
 <h1>ПРИХОВАНИЙ РОЗВОРОТ PRO 3.0</h1>
-<p>Bybit USDT Perpetual · M15 Sweep → BOS → Retest · H1 EMA20/EMA50 · Paper Trading</p>
+<p>Bybit USDT Perpetual · M15 Sweep → BOS → Retest · H1 EMA20/EMA50 · Paper Trading · API з резервними доменами</p>
 
 <section class="panel"><h2>Стан сканера</h2><div id="status" role="status" aria-live="polite">Готовий до запуску PRO 3.0.</div>
 <div class="progress"><div id="bar"></div></div><div class="grid" style="margin-top:12px">
@@ -50,10 +50,10 @@ button{border:0;border-radius:8px;padding:12px 15px;font-weight:bold;cursor:poin
 </main>
 <script>
 "use strict";
-const API="https://api.bybit.com", $=id=>document.getElementById(id);
+const API_HOSTS=["https://api.bybit.eu","https://api.bybit.com","https://api.bytick.com"], $=id=>document.getElementById(id);
 const MAX=20, MAX_RISK=.5, M15=15*60*1000, CYCLE=15*60*1000, BATCH=5, H1BATCH=4, PAUSE=220, FRESH=20*60*1000;
 const TK="paperTrades_v3_20", SK="paperState_v3_20";
-let running=false,busy=false,timer=null,symbols=[],signals=[],trades=[],used=new Set(),diag=null,progress={done:0,total:0};
+let running=false,busy=false,monitorBusy=false,timer=null,monitorTimer=null,apiHost=0,symbols=[],signals=[],trades=[],used=new Set(),diag=null,progress={done:0,total:0};
 
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const read=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}};
@@ -67,12 +67,23 @@ function load(){
  save();
 }
 async function api(path,attempt=0){
- const c=new AbortController(),tm=setTimeout(()=>c.abort(),15000);let res;
- try{res=await fetch(API+path,{signal:c.signal})}catch(e){clearTimeout(tm);if(attempt<2){await wait(1000*(attempt+1));return api(path,attempt+1)}throw Error(e.name==="AbortError"?"Тайм-аут Bybit":"Немає з'єднання з Bybit")}
- clearTimeout(tm);if(res.status===429&&attempt<3){await wait(1500*(attempt+1));return api(path,attempt+1)}
- if(!res.ok)throw Error("Bybit HTTP "+res.status);const j=await res.json();
- if(j.retCode!==0){if(j.retCode===10006&&attempt<3){await wait(1500*(attempt+1));return api(path,attempt+1)}throw Error(j.retMsg||"Помилка API")}
- return j.result;
+ const order=[apiHost,...API_HOSTS.map((_,i)=>i).filter(i=>i!==apiHost)];
+ const errors=[];
+ for(const idx of order){
+  const host=API_HOSTS[idx],c=new AbortController(),tm=setTimeout(()=>c.abort(),12000);
+  try{
+   const res=await fetch(host+path,{signal:c.signal,cache:"no-store"});
+   clearTimeout(tm);
+   if(res.status===429){errors.push(host+": HTTP 429 (ліміт запитів)");await wait(900);continue}
+   if(!res.ok){errors.push(host+": HTTP "+res.status);continue}
+   const j=await res.json();
+   if(j.retCode===0){apiHost=idx;return j.result}
+   errors.push(host+": API "+j.retCode+" — "+(j.retMsg||"помилка"));
+   if(j.retCode===10006)await wait(1200);
+  }catch(e){clearTimeout(tm);errors.push(host+": "+(e.name==="AbortError"?"тайм-аут":"мережа/CORS"));}
+ }
+ if(attempt<1){await wait(1200);return api(path,attempt+1)}
+ throw Error("Не вдалося підключитися до публічного API Bybit. Перевір інтернет, доступ до Bybit та блокування запитів браузером. Деталі: "+errors.join("; "));
 }
 async function loadSymbols(){
  let cursor="",all=new Set();
@@ -154,11 +165,22 @@ function render(){
  $("trades").innerHTML=trades.length?`<table><tr><th>Пара</th><th>Напрямок</th><th>Вхід</th><th>SL</th><th>TP1</th><th>TP2</th><th>Рейтинг</th><th>Статус</th><th>P/L</th><th>Вихід</th><th>Деталі</th></tr>${trades.map(t=>`<tr><td>${esc(t.symbol)}</td><td class="${t.side.toLowerCase()}">${t.side}</td><td>${fmt(t.entry)}</td><td>${fmt(t.sl)}</td><td>${fmt(t.tp1)}</td><td>${fmt(t.tp2)}</td><td>${t.score||0}/100</td><td>${t.status}</td><td class="${t.realized>=0?"positive":"negative"}">${money(t.realized)}</td><td>${esc(t.exitReason||"—")}</td><td>${tracking(t)}</td></tr>`).join("")}</table>`:"Угод ще немає.";
  if(trades.length>=MAX&&o.length===0){$("summary").innerHTML=`<p>Усі 20 угод закрито.</p><p>Прибуткових: <b>${w.length}</b> · Збиткових: <b>${l.length}</b> · Win rate: <b>${(w.length/c.length*100||0).toFixed(1)}%</b></p><p class="summary-value positive">TP: +${tp.toFixed(2)} USDT</p><p class="summary-value negative">SL: -${sl.toFixed(2)} USDT</p><hr><p class="summary-value ${net()>=0?"positive":"negative"}">ЧИСТИЙ P/L: ${money(net())} USDT</p><p class="note">До комісій, funding і прослизання.</p>`}
  else $("summary").innerHTML=`Проміжний результат: закрито ${c.length}, відкрито ${o.length}. TP +${tp.toFixed(2)} · SL -${sl.toFixed(2)} · Реалізований P/L ${money(net())}.`;
- $("diag").innerHTML=diag?`Останній цикл: ${new Date(diag.time).toLocaleString("uk-UA")}<br>Усього пар: ${diag.total}<br>Перевірено M15: ${diag.scanned}<br>M15-сетапів: ${diag.setups}<br>Підтверджено H1: ${diag.confirmed}<br>Відхилено/некоректних: ${diag.rejected}<br>Відкрита угода: ${esc(diag.opened||"ні")}<br>${esc(diag.note||"")}`:"Цикл ще не запускався.";
+ $("diag").innerHTML=diag?`Останній цикл: ${new Date(diag.time).toLocaleString("uk-UA")}<br>Усього пар: ${diag.total}<br>Перевірено M15: ${diag.scanned}<br>M15-сетапів: ${diag.setups}<br>Підтверджено H1: ${diag.confirmed}<br>Відхилено/некоректних: ${diag.rejected}<br>Помилки M15: ${diag.m15Errors||0}<br>Помилки H1: ${diag.h1Errors||0}<br>API: ${esc(API_HOSTS[apiHost])}<br>Відкрита угода: ${esc(diag.opened||"ні")}<br>${esc(diag.note||"")}`:"Цикл ще не запускався.";
  renderPairs();
 }
 function finishIfDone(){if(trades.length>=MAX&&trades.every(t=>t.status!=="OPEN")){stop(false);signals=[];render();$("status").textContent="Усі 20 угод закриті. Серію PRO 3.0 завершено.";return true}return false}
 
+async function monitorOpenPositions(){
+ if(!running||monitorBusy||!trades.some(t=>t.status==="OPEN"))return;
+ monitorBusy=true;
+ try{
+  const tk=await tickers(),px={};
+  for(const t of trades)if(t.status==="OPEN"&&tk[t.symbol])px[t.symbol]=+tk[t.symbol].lastPrice;
+  updateTrades(px);render();
+  if(finishIfDone())return;
+ }catch(e){console.warn("Моніторинг позицій:",e);if(!busy)$("status").textContent="Попередження моніторингу: "+e.message}
+ finally{monitorBusy=false}
+}
 async function scan(){
  if(busy||!running)return;busy=true;
  try{
@@ -169,15 +191,15 @@ async function scan(){
   if(trades.length>=MAX){signals=[];render();$("status").textContent="Ліміт 20/20. Нові входи вимкнено; відкриті позиції контролюються.";return}
   if(!symbols.length){$("status").textContent="Завантаження повного списку USDT perpetual...";symbols=await loadSymbols();$("pairs").textContent=symbols.length}
   if(!running)return;
-  const st={time:Date.now(),total:symbols.length,scanned:0,setups:0,confirmed:0,rejected:0,opened:"",note:"Оцінювання всіх підтверджених кандидатів."},found=[];
+  const st={time:Date.now(),total:symbols.length,scanned:0,setups:0,confirmed:0,rejected:0,m15Errors:0,h1Errors:0,opened:"",note:"Оцінювання всіх підтверджених кандидатів."},found=[];
   progress={done:0,total:symbols.length};render();
   for(let i=0;i<symbols.length;i+=BATCH){
    if(!running)return;const batch=symbols.slice(i,i+BATCH);
-   const res=await Promise.all(batch.map(async sym=>{try{const d=await candles(sym,"15"),s=findSetup(d);return s?{symbol:sym,...s}:null}catch(e){console.warn("M15",sym,e);return null}}));
+   const res=await Promise.all(batch.map(async sym=>{try{const d=await candles(sym,"15"),s=findSetup(d);return s?{symbol:sym,...s}:null}catch(e){st.m15Errors++;console.warn("M15",sym,e);return null}}));
    found.push(...res.filter(Boolean));st.scanned=Math.min(i+batch.length,symbols.length);progress={done:st.scanned,total:symbols.length};
    $("status").textContent=`● M15: ${st.scanned} / ${symbols.length} пар.`;$("scanned").textContent=`${st.scanned} / ${symbols.length}`;$("bar").style.width=(st.scanned/symbols.length*100)+"%";await wait(PAUSE);
   }
-  if(!running)return;st.setups=found.length;const candidates=[];
+  if(!running)return;st.setups=found.length;if(st.m15Errors===st.total){diag=st;save();render();throw Error("Не вдалося завантажити жодної M15-свічки. Перевір доступ до Bybit API або CORS.")}const candidates=[];
   for(let i=0;i<found.length;i+=H1BATCH){
    if(!running)return;const batch=found.slice(i,i+H1BATCH);
    const res=await Promise.all(batch.map(async s=>{try{
@@ -185,7 +207,7 @@ async function scan(){
     const t=tk[s.symbol],p=+t?.lastPrice;if(!Number.isFinite(p)||p<=0){st.rejected++;return null}
     const h=await confirmH1(s.symbol,s.side);if(!h){st.rejected++;return null}
     st.confirmed++;return score({...s,price:p},t,h);
-   }catch(e){st.rejected++;console.warn("H1",s.symbol,e);return null}}));
+   }catch(e){st.h1Errors++;st.rejected++;console.warn("H1",s.symbol,e);return null}}));
    candidates.push(...res.filter(Boolean));$("status").textContent=`● H1: ${Math.min(i+batch.length,found.length)} / ${found.length} кандидатів.`;await wait(180);
   }
   if(!running)return;candidates.sort((a,b)=>b.score-a.score);signals=candidates.slice(0,5);
@@ -197,8 +219,8 @@ async function scan(){
  }catch(e){console.error(e);$("status").textContent="Помилка: "+(e.message||"невідома")}
  finally{busy=false;render()}
 }
-function start(){if(running)return;if(finishIfDone())return;running=true;$("status").textContent="● PRO 3.0 запущено. Перший цикл починається зараз.";scan();timer=setInterval(scan,CYCLE)}
-function stop(show=true){running=false;if(timer){clearInterval(timer);timer=null}if(show)$("status").textContent="Сканер зупинено вручну. Відкриті позиції більше не контролюються."}
+function start(){if(running)return;if(finishIfDone())return;running=true;$("status").textContent="● PRO 3.0 запущено. Перевірка API та перший цикл починаються зараз.";scan();monitorOpenPositions();timer=setInterval(scan,CYCLE);monitorTimer=setInterval(monitorOpenPositions,20000)}
+function stop(show=true){running=false;if(timer){clearInterval(timer);timer=null}if(monitorTimer){clearInterval(monitorTimer);monitorTimer=null}if(show)$("status").textContent="Сканер зупинено вручну. Відкриті позиції більше не контролюються."}
 function reset(){if(!confirm("Очистити лише журнал PRO 3.0? Журнал PRO 2.0 і результат +60 USDT залишаться без змін."))return;stop(false);trades=[];signals=[];used.clear();symbols=[];diag=null;progress={done:0,total:0};save();render();$("status").textContent="Журнал PRO 3.0 очищено. Готовий до нової серії."}
 function init(){load();render();$("start").addEventListener("click",start);$("stop").addEventListener("click",()=>stop(true));$("reset").addEventListener("click",reset);
  if(trades.length>=MAX){const n=trades.filter(t=>t.status==="OPEN").length;$("status").textContent=n?`20 угод уже відкрито. Натисни «Запустити» для контролю ${n} відкритих позицій.`:"Серію PRO 3.0 завершено."}else $("status").textContent=`Готовий до запуску. Угод: ${trades.length}/20.`}
